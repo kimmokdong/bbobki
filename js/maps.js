@@ -82,11 +82,29 @@ window.MarbleMaps = {
     // 6. 가로로 튕기며 움직이는 펀치 막대 2개 배치 (관 안쪽)
     const punches = [];
     
+    const createSawtoothPunch = (x, y, w, h, opts) => {
+      const parts = [];
+      const numTeeth = 5;
+      const tw = w / numTeeth;
+      parts.push(Bodies.rectangle(x, y + h/4, w, h/2, { render: opts.render }));
+      for (let i = 0; i < numTeeth; i++) {
+        const tx = x - w/2 + tw/2 + i*tw;
+        parts.push(Bodies.polygon(tx, y - h/4, 3, tw*0.6, { angle: Math.PI/2, render: opts.render }));
+      }
+      return Body.create({
+        parts: parts,
+        isStatic: true,
+        label: opts.label,
+        restitution: opts.restitution,
+        friction: opts.friction,
+        render: opts.render
+      });
+    };
+
     // 상단 펀치 (좌->우 시작)
-    const punchLeft = Bodies.rectangle(gateX - 25, funnelY + 140, 70, 14, {
-      isStatic: true,
+    const punchLeft = createSawtoothPunch(gateX - 25, funnelY + 140, 70, 14, {
       label: 'punch',
-      restitution: 1.5, // 튕기는 힘
+      restitution: 3.0, // 튕기는 힘
       friction: 0,
       render: { fillStyle: '#ef4444', strokeStyle: '#fca5a5', lineWidth: 2 }
     });
@@ -96,10 +114,9 @@ window.MarbleMaps = {
     punches.push(punchLeft);
 
     // 하단 펀치 (우->좌 시작)
-    const punchRight = Bodies.rectangle(gateX + 25, funnelY + 190, 70, 14, {
-      isStatic: true,
+    const punchRight = createSawtoothPunch(gateX + 25, funnelY + 190, 70, 14, {
       label: 'punch',
-      restitution: 1.5,
+      restitution: 3.0,
       friction: 0,
       render: { fillStyle: '#3b82f6', strokeStyle: '#93c5fd', lineWidth: 2 }
     });
@@ -208,7 +225,7 @@ window.MarbleMaps = {
           items.push(Bodies.circle(x, y, 18, {
             isStatic: true,
             label: 'bumper',
-            restitution: 1.5,
+            restitution: 2.0,
             friction: 0,
             render: {
               fillStyle: '#10b981',

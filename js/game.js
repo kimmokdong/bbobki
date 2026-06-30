@@ -80,6 +80,38 @@ window.MarbleGame = {
     });
     this.world = this.engine.world;
 
+    // 물리 엔진 충돌 이벤트 감지 (고무줄/트램폴린 튕김 처리)
+    Matter.Events.on(this.engine, 'collisionStart', (event) => {
+      event.pairs.forEach(pair => {
+        const bodyA = pair.bodyA;
+        const bodyB = pair.bodyB;
+
+        if ((bodyA.label === 'punch' && bodyB.label === 'marble') ||
+            (bodyB.label === 'punch' && bodyA.label === 'marble') ||
+            (bodyA.label === 'bumper' && bodyB.label === 'marble') ||
+            (bodyB.label === 'bumper' && bodyA.label === 'marble')) {
+          
+          const marble = bodyA.label === 'marble' ? bodyA : bodyB;
+          const obstacle = bodyA.label === 'marble' ? bodyB : bodyA;
+          
+          // 장애물의 중심에서 구슬을 밀어내는 방향 계산
+          let vx = (Math.random() - 0.5) * 8; // 좌우 분산
+          let vy = -20; // 기본적으로 강하게 위로 튕김
+          
+          // 범퍼일 경우 위치 기반으로 튕겨냄
+          if (obstacle.label === 'bumper') {
+            const dx = marble.position.x - obstacle.position.x;
+            const dy = marble.position.y - obstacle.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            vx = (dx / dist) * 15;
+            vy = (dy / dist) * 15 - 5; // 범퍼는 맞은 방향으로 강하게 튕김 (약간 위쪽 보정)
+          }
+
+          Body.setVelocity(marble, { x: vx, y: vy });
+        }
+      });
+    });
+
     this.isPaused = true;
     this.marbles = [];
     this.spinners = [];
@@ -569,41 +601,56 @@ window.MarbleGame = {
       }
     });
 
-    // 2. 근처 장애물(펙, 범퍼 등 작은 static body)도 일시적으로 튕겨내서 끼임 방지
+    // 2. 근처 장애물(펙, 범퍼 등 static body) 및 벽체 처리
     const allBodies = Composite.allBodies(this.world);
     allBodies.forEach(staticBody => {
-      // 벽, 센서, 스피너, 깔때기는 제외 - 작은 장애물만 대상
       if (!staticBody.isStatic) return;
       if (staticBody.isSensor) return;
       if (staticBody.label === 'spinner') return;
-      if (staticBody.label === 'finish_sensor') return;
-      // 너무 큰 바디(벽, 깔때기 슬로프)는 제외: 넓이로 판단
+      
       const bounds = staticBody.bounds;
-      const bWidth = bounds.max.x - bounds.min.x;
-      const bHeight = bounds.max.y - bounds.min.y;
-      if (bWidth > 100 || bHeight > 100) return;
+      
+      // 구슬과 장애물 경계 상자(AABB) 간의 가장 가까운 지점 계산
+      const closestX = Math.max(bounds.min.x, Math.min(body.position.x, bounds.max.x));
+      const closestY = Math.max(bounds.min.y, Math.min(body.position.y, bounds.max.y));
+      
+      const distVector = { x: closestX - body.position.x, y: closestY - body.position.y };
+      const dist = Math.sqrt(distVector.x * distVector.x + distVector.y * distVector.y);
 
-      const distVector = Vector.sub(staticBody.position, body.position);
-      const dist = Vector.magnitude(distVector);
+      if (dist < radius && dist > 1) {
+        // [추가] 벽에 장풍을 쏘면 구슬 자신이 반작용으로 튕겨나감 (끼임 방지)
+        const reactionDirection = { x: -distVector.x / dist, y: -distVector.y / dist }; 
+        const reactionMagnitude = (1 - dist / radius) * baseForce * body.mass * 1.5; // 반작용 증폭
+        Body.applyForce(body, body.position, { 
+          x: reactionDirection.x * reactionMagnitude, 
+          y: reactionDirection.y * reactionMagnitude 
+        });
 
-      if (dist < radius * 0.7 && dist > 1) {
-        // 일시적으로 static 해제 후 힘 적용, 잠시 뒤 복원
-        const originalPos = { x: staticBody.position.x, y: staticBody.position.y };
-        const originalAngle = staticBody.angle;
+        // 기존 로직: 작은 장애물(펙 등)은 일시적으로 튕겨나감
+        const bWidth = bounds.max.x - bounds.min.x;
+        const bHeight = bounds.max.y - bounds.min.y;
+        if (bWidth <= 100 && bHeight <= 100 && staticBody.label !== 'punch') {
+          const bodyDistVector = Vector.sub(staticBody.position, body.position);
+          const bodyDist = Vector.magnitude(bodyDistVector);
+          
+          if (bodyDist < radius * 0.7 && bodyDist > 1) {
+            const originalPos = { x: staticBody.position.x, y: staticBody.position.y };
+            const originalAngle = staticBody.angle;
 
-        Body.setStatic(staticBody, false);
-        Body.setMass(staticBody, 5); // 가벼운 질량 부여
-        
-        const forceMagnitude = (1 - dist / radius) * 0.008;
-        const forceDirection = Vector.normalise(distVector);
-        Body.applyForce(staticBody, staticBody.position, Vector.mult(forceDirection, forceMagnitude));
+            Body.setStatic(staticBody, false);
+            Body.setMass(staticBody, 5);
+            
+            const forceMagnitude = (1 - bodyDist / radius) * 0.008;
+            const forceDirection = Vector.normalise(bodyDistVector);
+            Body.applyForce(staticBody, staticBody.position, Vector.mult(forceDirection, forceMagnitude));
 
-        // 300ms 뒤 원래 위치로 복귀 + static 복원
-        setTimeout(() => {
-          Body.setStatic(staticBody, true);
-          Body.setPosition(staticBody, originalPos);
-          Body.setAngle(staticBody, originalAngle);
-        }, 300);
+            setTimeout(() => {
+              Body.setStatic(staticBody, true);
+              Body.setPosition(staticBody, originalPos);
+              Body.setAngle(staticBody, originalAngle);
+            }, 300);
+          }
+        }
       }
     });
   },
@@ -785,12 +832,15 @@ window.MarbleGame = {
           body.label === 'booster' || body.label === 'slow_zone') return;
 
       ctx.beginPath();
-      const vertices = body.vertices;
-      ctx.moveTo(vertices[0].x, vertices[0].y);
-      for (let i = 1; i < vertices.length; i++) {
-        ctx.lineTo(vertices[i].x, vertices[i].y);
-      }
-      ctx.closePath();
+      const partsToDraw = body.parts.length > 1 ? body.parts.slice(1) : [body];
+      partsToDraw.forEach(part => {
+        const vertices = part.vertices;
+        ctx.moveTo(vertices[0].x, vertices[0].y);
+        for (let i = 1; i < vertices.length; i++) {
+          ctx.lineTo(vertices[i].x, vertices[i].y);
+        }
+        ctx.closePath();
+      });
 
       if (body.label === 'bumper') {
         ctx.fillStyle = body.render.fillStyle || '#10b981';
