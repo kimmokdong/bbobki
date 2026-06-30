@@ -1,0 +1,54 @@
+# 바이브코딩 프롬프트 히스토리 & 개발 노하우
+
+본 문서는 개발 과정에서 겪은 오류, 해결책, Matter.js 및 UI 구현 관련 핵심 팁과 노하우를 자산화하는 공간입니다. 새로운 노하우는 항상 **최상단에 추가(Prepend)**합니다.
+
+---
+
+## [2026-06-30] 일반 스크립트 로드 방식에서의 전역 변수 중복 선언(Identifier already declared) 에러 및 IIFE 스코프 격리 노하우
+- **에러/이슈**: 
+  - `maps.js`와 `game.js`가 차례로 로드될 때, 브라우저 콘솔에 `Uncaught SyntaxError: Identifier 'Bodies' has already been declared` 에러가 발생하며 스크립트 실행이 중단되고 맵이 전혀 보이지 않는 결함 발생.
+- **원인**: 
+  - `type="module"`을 지정하지 않고 HTML에서 일반 `<script src="...">` 태그로 로드할 경우, 모든 스크립트 파일이 단일 글로벌 스코프(Window)에서 실행됨.
+  - 이로 인해 서로 다른 파일 상단에서 `const { Bodies, Body, Composite } = Matter;`처럼 동일한 변수명을 중복 선언할 경우 SyntaxError가 발생함.
+- **해결책 및 노하우**:
+  - `maps.js`와 `game.js` 등 개별 스크립트 파일의 전체 코드를 즉시 실행 함수 블록 **IIFE** `(function() { ... })();`로 감싸서 변수 스코프를 로컬로 격리함.
+  - 외부 연동이 필요한 인터페이스 객체(`MarbleGame`, `MarbleMaps`)만 `window.MarbleGame = ...` 형태로 글로벌 네임스페이스에 명시적으로 연결함.
+  - 이와 같은 IIFE 캡슐화 패턴은 바닐라 자바스크립트 아키텍처에서 변수 충돌로 인한 사이드 이펙트를 원천 봉쇄하는 가장 강력한 보안책임.
+
+
+## [2026-06-30] Matter.js Composite 참조 누락으로 인한 Canvas 2D 커스텀 렌더러 렌더링 중단 오류
+- **에러/이슈**: 
+  - 물리 기반 구슬 룰렛 게임 실행 시 UI 프레임은 정상 렌더링되나 우측 물리 시뮬레이션 캔버스 화면이 검은색 단색으로만 노출되고 장애물 및 구슬이 전혀 그려지지 않음.
+- **원인**: 
+  - `game.js` 내의 커스텀 렌더러 함수 `render`에서 `Composite.allBodies(this.world)`를 호출하고 있으나, 상단 구조분해할당(`const { Engine, World, Runner, Bodies, Body, Events, Vector } = Matter;`)에서 `Composite` 객체가 누락되어 `Composite is not defined` ReferenceError가 발생함.
+  - 이로 인해 렌더링 루프인 `requestAnimationFrame` 룹 내부에서 스크립트 실행이 중단되어 캔버스가 업데이트되지 않음.
+- **해결책 및 노하우**:
+  - `game.js` 상단 임포트문에 `Composite`를 추가하여 `const { Engine, World, Runner, Bodies, Body, Composite, Events, Vector } = Matter;`로 수정함.
+  - 캔버스 렌더링이나 물리 루프에 에러가 발생하면 전체 시각 루프가 멈추므로, Matter.js 모듈 사용 시 `Composite`, `Vector`, `Events` 등의 객체 임포트 누락 여부를 항상 최우선적으로 체크해야 함.
+
+
+## [2026-06-30] Matter.js 2D 물리 엔진 제어 및 룰렛 조작(Rigging) 노하우
+- **에러/이슈**: 
+  - 물리 시뮬레이션 기반 게임에서 특정 구슬이 정확하게 원하는 등수(예: 1등, 3등 등)로 결승선을 통과하게 조작하는 것은 단순한 힘 적용만으로는 부자연스럽거나 실패할 확률이 높음.
+  - 고정된 회전날개(스피너)를 dynamic 바디로 만들어 모터를 가할 때 물리 충돌 연산 과부하로 구슬이 맵 밖으로 순간이동하는 현상(Tunneling/Ghosting) 발생.
+- **해결책 및 노하우**:
+  1. **정밀 물리 조작 알고리즘**:
+     - 결승 통과 수(`finishedMarbles.length`)와 당첨 설정된 구슬의 `targetRank`를 매 프레임 비교.
+     - `targetRank === finishedMarbles.length + 1` (자기 차례)인 경우: 결승 게이트 중심을 향해 구슬의 질량(`body.mass`)에 비례하는 미세 인력(Attraction)을 가해 우선 골인 유도.
+     - `targetRank > finishedMarbles.length + 1` (아직 뒷순위 차례)인 경우: 결승 입구 부근에서 좌우로 미는 부드러운 척력(Repulsion)을 주어 게이트 통과를 부드럽게 지연시킴.
+     - 일반 구슬이 새치기하려 할 때 게이트 주변에서 튕겨내거나 감속을 가해 당첨 구슬의 틈을 열어줌.
+  2. **안정적인 회전 장애물(Spinner) 제어**:
+     - 조인트(Constraint)로 연결된 동적 회전 물리 대신, `isStatic: true`인 바디를 생성하고 `Body.setAngle(spinner, spinner.angle + speed)`을 매 물리 갱신 루프마다 직접 수행.
+     - 이 방식이 충돌 계산 시 구슬을 맵 밖으로 튕겨내지 않고 가장 일관되고 안정적인 밀치기 물리력을 구현함.
+  3. **교착 상태 해소를 위한 장풍(Wind) 스킬**:
+     - 구슬의 현재 좌표 반경(예: 120px) 내의 다른 구슬들에 대해 거리 반비례 척력을 주어 교착을 풀고 게임 진행에 활력을 줌.
+     - Canvas 2D 커스텀 렌더링 루프에서 충격파 링(`arc`)을 15프레임간 투명해지며 커지도록 동기화하여 타격감 극대화.
+
+
+## [2026-06-30] 프로젝트 세팅 및 기획 확정
+- **내용**: 물리기반 구슬 룰렛 게임(bbobki) 개발 착수.
+- **결정 사항**:
+  - 오디오 없이(Silent) PC 화면 대화면에 최적화된 글래스모피즘 테마 설계.
+  - 구슬 전방위 장풍 스킬 구현을 통해 물리적 정체 현상을 극복하고 랜덤성 극대화.
+  - 특정 구슬을 조작(Rigging)하여 지정한 등수(1등~꼴찌 등)로 유도하는 물리 보정 로직 기획.
+  - 당첨 타겟 구슬을 카메라가 자동 추적(Focus)하여 보는 맛과 긴장감 추가.
