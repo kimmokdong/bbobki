@@ -102,9 +102,9 @@ window.MarbleMaps = {
     };
 
     // 상단 펀치 (좌->우 시작)
-    const punchLeft = createSawtoothPunch(gateX - 25, funnelY + 140, 70, 14, {
+    const punchLeft = createSawtoothPunch(gateX - 25, funnelY + 140, 52, 14, {
       label: 'punch',
-      restitution: 3.0, // 튕기는 힘
+      restitution: 1.6,
       friction: 0,
       render: { fillStyle: '#ef4444', strokeStyle: '#fca5a5', lineWidth: 2 }
     });
@@ -114,9 +114,9 @@ window.MarbleMaps = {
     punches.push(punchLeft);
 
     // 하단 펀치 (우->좌 시작)
-    const punchRight = createSawtoothPunch(gateX + 25, funnelY + 190, 70, 14, {
+    const punchRight = createSawtoothPunch(gateX + 25, funnelY + 190, 52, 14, {
       label: 'punch',
-      restitution: 3.0,
+      restitution: 1.6,
       friction: 0,
       render: { fillStyle: '#3b82f6', strokeStyle: '#93c5fd', lineWidth: 2 }
     });
@@ -139,8 +139,8 @@ window.MarbleMaps = {
   // 기믹 생성 헬퍼 함수들 (game.js에서 상태 체크용으로 속성 주입)
   // ----------------------------------------------------
   // 1. 순간이동 포탈 쌍 생성
-  createPortalPair: function(world, inX, inY, outX, outY, color) {
-    const portalIn = Bodies.circle(inX, inY, 18, {
+  createPortalPair: function(world, inX, inY, outX, outY, color, radius = 18) {
+    const portalIn = Bodies.circle(inX, inY, radius, {
       isStatic: true,
       isSensor: true,
       label: 'portal_in',
@@ -150,15 +150,19 @@ window.MarbleMaps = {
     // 출구 위치 메타데이터 연결
     portalIn.targetPos = { x: outX, y: outY };
     portalIn.portalColor = color || '#38bdf8';
+    portalIn.portalRadius = radius;
+    portalIn.triggerRadius = radius + 12;
+    portalIn.portalId = `${inX}:${inY}:${outX}:${outY}`;
 
     // 맵 내 출구 시각 표시용 센서
-    const portalOut = Bodies.circle(outX, outY, 18, {
+    const portalOut = Bodies.circle(outX, outY, radius, {
       isStatic: true,
       isSensor: true,
       label: 'portal_out',
       render: { fillStyle: 'transparent' }
     });
     portalOut.portalColor = color || '#f97316';
+    portalOut.portalRadius = radius;
 
     Composite.add(world, [portalIn, portalOut]);
     return { portalIn, portalOut };
@@ -196,6 +200,22 @@ window.MarbleMaps = {
 
     Composite.add(world, slowZone);
     return slowZone;
+  },
+
+  // 물리에 영향을 주지 않는 맵 안내 표지판
+  createSign: function(world, x, y, text, color, fontSize = 18) {
+    const sign = Bodies.rectangle(x, y, 2, 2, {
+      isStatic: true,
+      isSensor: true,
+      label: 'map_sign',
+      collisionFilter: { mask: 0 },
+      render: { visible: false }
+    });
+    sign.signText = text;
+    sign.signColor = color || '#f8fafc';
+    sign.signFontSize = fontSize;
+    Composite.add(world, sign);
+    return sign;
   },
 
   // ----------------------------------------------------
@@ -441,6 +461,250 @@ window.MarbleMaps = {
     // 2. 감속 늪지대와 부스터 배치
     this.createSlowZone(world, width / 2, 380, 220, 50); // 소용돌이 1 진입 직전 감속
     this.createBooster(world, width / 2, 480, 100, 30, 0, 0.002);
+
+    return { spinners };
+  },
+
+  // ----------------------------------------------------
+  // 맵 5: 운명의 세 문 (Fate Doors)
+  // 세 포탈의 급행/보통/후퇴 결과가 맵 생성 때마다 뒤섞임
+  // ----------------------------------------------------
+  createFateDoorsMap: function(world, width, height) {
+    const items = [];
+    const spinners = [];
+    const laneXs = [width / 6, width / 2, width * 5 / 6];
+    const funnelY = height - 190;
+    const railOptions = {
+      isStatic: true,
+      restitution: 0.35,
+      friction: 0,
+      render: { fillStyle: '#312e81', strokeStyle: '#818cf8', lineWidth: 2 }
+    };
+    const bumperOptions = {
+      isStatic: true,
+      label: 'bumper',
+      restitution: 1.8,
+      friction: 0,
+      render: { fillStyle: '#ec4899', strokeStyle: '#f9a8d4', lineWidth: 3 }
+    };
+
+    this.createSign(world, width / 2, 70, '🚪 운명의 세 문 · 두 번의 선택', '#f8fafc', 24);
+
+    const buildDoorStage = (topY, stageNumber, outcomes) => {
+      this.createSign(world, width / 2, topY + 35, `${stageNumber}차 운명의 문`, '#ddd6fe', 20);
+
+      const gateSpinner = this.addSpinner(world, width / 2, topY + 100, 430, 18, stageNumber === 1 ? 0.032 : -0.036);
+      gateSpinner.render.fillStyle = stageNumber === 1 ? '#7c3aed' : '#db2777';
+      gateSpinner.render.strokeStyle = stageNumber === 1 ? '#c4b5fd' : '#f9a8d4';
+      spinners.push(gateSpinner);
+
+      items.push(Bodies.rectangle(width / 3, topY + 380, 12, 460, railOptions));
+      items.push(Bodies.rectangle(width * 2 / 3, topY + 380, 12, 460, railOptions));
+      items.push(Bodies.circle(130, topY + 220, 20, bumperOptions));
+      items.push(Bodies.circle(400, topY + 235, 20, bumperOptions));
+      items.push(Bodies.circle(670, topY + 220, 20, bumperOptions));
+
+      laneXs.forEach((x, index) => {
+        items.push(Bodies.rectangle(x - 85, topY + 480, 100, 12, { ...railOptions, angle: 0.42 }));
+        items.push(Bodies.rectangle(x + 85, topY + 480, 100, 12, { ...railOptions, angle: -0.42 }));
+        this.createSign(world, x, topY + 405, `${index + 1}번 문 ?`, '#c4b5fd', 17);
+      });
+
+      const shuffled = outcomes.map(outcome => ({ ...outcome }));
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      laneXs.forEach((x, index) => {
+        const outcome = shuffled[index];
+        const pair = this.createPortalPair(world, x, topY + 560, outcome.x, outcome.y, '#a855f7', 26);
+        pair.portalIn.portalIcon = '?';
+        pair.portalIn.singleUse = true;
+        pair.portalOut.portalColor = outcome.color;
+        this.createSign(world, outcome.x, outcome.y - 45, outcome.label, outcome.color, 17);
+      });
+    };
+
+    buildDoorStage(100, 1, [
+      { x: 130, y: 1120, label: '⚡ 1차 급행!', color: '#22c55e' },
+      { x: 400, y: 900, label: '➖ 1차 보통', color: '#38bdf8' },
+      { x: 670, y: 270, label: '↩ 1차 후퇴!', color: '#f43f5e' }
+    ]);
+
+    const middleMixer = this.addSpinner(world, width / 2, 1180, 540, 20, -0.025);
+    middleMixer.render.fillStyle = '#0ea5e9';
+    middleMixer.render.strokeStyle = '#7dd3fc';
+    spinners.push(middleMixer);
+
+    buildDoorStage(1280, 2, [
+      { x: 130, y: 2450, label: '⚡ 최종 급행!', color: '#22c55e' },
+      { x: 400, y: 2200, label: '➖ 최종 보통', color: '#38bdf8' },
+      { x: 670, y: 1350, label: '↩ 최종 후퇴!', color: '#f43f5e' }
+    ]);
+
+    const lowerBumpers = [
+      [170, 2080], [630, 2080], [250, 2300], [550, 2300],
+      [180, 2520], [620, 2520]
+    ].map(([x, y]) => Bodies.circle(x, y, 22, {
+      ...bumperOptions,
+      render: { fillStyle: '#10b981', strokeStyle: '#6ee7b7', lineWidth: 3 }
+    }));
+    items.push(...lowerBumpers);
+    Composite.add(world, items);
+
+    this.createSlowZone(world, width / 2, funnelY - 570, 250, 82);
+    this.createBooster(world, 160, funnelY - 430, 120, 28, 0.28, 0.0035);
+    this.createBooster(world, 640, funnelY - 430, 120, 28, -0.28, 0.0035);
+
+    // 전용 피니시: 크기가 다른 세 회전문을 통과해야 결승 깔때기에 진입한다.
+    this.createSign(world, width / 2, funnelY - 390, '🔐 삼중 회전 자물쇠', '#fbbf24', 22);
+    const finalLocks = [
+      this.addSpinner(world, width / 2, funnelY - 300, 520, 20, 0.018),
+      this.addSpinner(world, width / 2, funnelY - 190, 360, 20, -0.029),
+      this.addSpinner(world, width / 2, funnelY - 85, 260, 18, 0.042)
+    ];
+    const lockColors = [
+      ['#f59e0b', '#fde68a'],
+      ['#ec4899', '#f9a8d4'],
+      ['#8b5cf6', '#c4b5fd']
+    ];
+    finalLocks.forEach((lock, index) => {
+      lock.render.fillStyle = lockColors[index][0];
+      lock.render.strokeStyle = lockColors[index][1];
+    });
+    spinners.push(...finalLocks);
+
+    return { spinners };
+  },
+
+  // ----------------------------------------------------
+  // 맵 6: 뱀과 사다리 (Snakes & Ladders)
+  // 초록 포탈은 크게 전진하고 빨간 포탈은 위로 되돌려 보냄
+  // ----------------------------------------------------
+  createSnakesAndLaddersMap: function(world, width, height) {
+    const items = [];
+    const spinners = [];
+    const funnelY = height - 190;
+
+    this.createSign(world, width / 2, 80, '🐍 뱀과 사다리 · 4단 대역전 레이스', '#f8fafc', 23);
+
+    const portals = [
+      { kind: 'ladder', icon: '↓', x: 650, y: 520, outX: 135, outY: 1130, color: '#22c55e', text: '🪜 사다리 +600' },
+      { kind: 'snake', icon: '↩', x: 400, y: 850, outX: 120, outY: 340, color: '#ef4444', text: '🐍 뱀 -500' },
+      { kind: 'ladder', icon: '↓', x: 150, y: 1020, outX: 650, outY: 1570, color: '#22c55e', text: '🪜 사다리 +550' },
+      { kind: 'snake', icon: '↩', x: 620, y: 1450, outX: 680, outY: 900, color: '#ef4444', text: '🐍 뱀 -550' },
+      { kind: 'ladder', icon: '↓', x: 650, y: 1760, outX: 130, outY: 2350, color: '#22c55e', text: '🪜 사다리 +600' },
+      { kind: 'snake', icon: '↩', x: 380, y: 2070, outX: 100, outY: 1420, color: '#ef4444', text: '🐍 뱀 -650' },
+      { kind: 'ladder', icon: '↓', x: 150, y: 2400, outX: 650, outY: 2920, color: '#22c55e', text: '🪜 사다리 +500' },
+      { kind: 'snake', icon: '↩', x: 620, y: 2700, outX: 680, outY: 2150, color: '#ef4444', text: '🐍 뱀 -550' },
+      { kind: 'final', icon: '↩', x: 400, y: funnelY - 90, outX: 680, outY: funnelY - 690, color: '#fb7185', text: '🐍 최후의 코브라 -600' }
+    ];
+    const portalClearPoints = portals.flatMap(portal => [
+      { x: portal.x, y: portal.y },
+      { x: portal.outX, y: portal.outY }
+    ]);
+    const rails = [
+      { x: 250, y: 470, angle: 0.2 },
+      { x: 550, y: 760, angle: -0.2 },
+      { x: 250, y: 1250, angle: 0.2 },
+      { x: 250, y: 2020, angle: 0.2 },
+      { x: 550, y: 2380, angle: -0.2 },
+      { x: 250, y: 2770, angle: 0.2 }
+    ];
+    const railYs = rails.map(rail => rail.y);
+
+    // 열린 핀볼 격자: 구슬이 포탈을 맞거나 비껴갈 여지를 함께 준다.
+    const rowGap = 105;
+    const colGap = 90;
+    for (let y = 180, row = 0; y < funnelY - 320; y += rowGap, row++) {
+      // 레일 위·아래에 구슬 지름보다 넓은 통로를 확보해 핀 사이 끼임을 막는다.
+      if (railYs.some(railY => Math.abs(y - railY) < 105)) continue;
+      const startX = row % 2 === 0 ? 55 : 100;
+      for (let x = startX, col = 0; x < width - 40; x += colGap, col++) {
+        if (portalClearPoints.some(point => Math.hypot(x - point.x, y - point.y) < 110)) continue;
+        const isBumper = (row + col) % 7 === 0;
+        items.push(Bodies.circle(x, y, isBumper ? 19 : 6, {
+          isStatic: true,
+          label: isBumper ? 'bumper' : 'peg',
+          restitution: isBumper ? 1.9 : 0.75,
+          friction: 0,
+          render: isBumper
+            ? { fillStyle: '#f59e0b', strokeStyle: '#fde68a', lineWidth: 3 }
+            : { fillStyle: '#475569' }
+        }));
+      }
+    }
+
+    // 대각 레일이 구슬을 포탈 쪽으로 밀었다가 다시 중앙으로 합류시킨다.
+    const railOptions = {
+      isStatic: true,
+      restitution: 0.45,
+      friction: 0,
+      render: { fillStyle: '#1e3a5f', strokeStyle: '#60a5fa', lineWidth: 2 }
+    };
+    rails.forEach(rail => {
+      items.push(Bodies.rectangle(rail.x, rail.y, 330, 14, { ...railOptions, angle: rail.angle }));
+    });
+    Composite.add(world, items);
+
+    const fieldSpinners = [
+      this.addSpinner(world, width / 2, 665, 460, 18, 0.026),
+      this.addSpinner(world, width / 2, 1160, 500, 18, -0.029),
+      this.addSpinner(world, width / 2, 1870, 520, 18, 0.024),
+      this.addSpinner(world, width / 2, 2520, 480, 18, -0.031)
+    ];
+    fieldSpinners.forEach((spinner, index) => {
+      const isLadderColor = index % 2 === 0;
+      spinner.render.fillStyle = isLadderColor ? '#16a34a' : '#dc2626';
+      spinner.render.strokeStyle = isLadderColor ? '#86efac' : '#fca5a5';
+    });
+    spinners.push(...fieldSpinners);
+
+    portals.forEach(portal => {
+      const pair = this.createPortalPair(
+        world,
+        portal.x,
+        portal.y,
+        portal.outX,
+        portal.outY,
+        portal.color,
+        28
+      );
+      pair.portalIn.portalIcon = portal.icon;
+      pair.portalIn.portalKind = portal.kind;
+      pair.portalIn.singleUse = true;
+      this.createSign(world, portal.x, portal.y - 48, portal.text, portal.color, 16);
+    });
+
+    // 사다리 진입을 돕는 가속 패드와 뱀 구간의 늪
+    this.createBooster(world, 565, 450, 110, 26, 0.35, 0.0035);
+    this.createBooster(world, 235, 950, 110, 26, -0.35, 0.0035);
+    this.createBooster(world, 565, 1680, 110, 26, 0.35, 0.0035);
+    this.createBooster(world, 235, 2320, 110, 26, -0.35, 0.0035);
+    this.createSlowZone(world, width / 2, 800, 210, 62);
+    this.createSlowZone(world, 620, 1395, 170, 62);
+    this.createSlowZone(world, 380, 2015, 180, 62);
+    this.createSlowZone(world, 620, 2645, 170, 62);
+
+    // 전용 피니시: 중앙 코브라를 밟으면 한 번만 크게 후퇴한다.
+    this.createSign(world, width / 2, funnelY - 200, '🐍 최후의 코브라 · 중앙을 피하라!', '#fb7185', 21);
+    Composite.add(world, [
+      Bodies.circle(270, funnelY - 150, 28, {
+        isStatic: true,
+        label: 'bumper',
+        restitution: 2.1,
+        friction: 0,
+        render: { fillStyle: '#ef4444', strokeStyle: '#fecaca', lineWidth: 4 }
+      }),
+      Bodies.circle(530, funnelY - 150, 28, {
+        isStatic: true,
+        label: 'bumper',
+        restitution: 2.1,
+        friction: 0,
+        render: { fillStyle: '#ef4444', strokeStyle: '#fecaca', lineWidth: 4 }
+      })
+    ]);
 
     return { spinners };
   },
