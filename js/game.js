@@ -128,9 +128,16 @@ window.MarbleGame = {
   // 맵 로드 및 물리 경계 구축
   loadMap: function(mapType) {
     this.currentMapType = mapType;
+    this.setSpeed(1.0);
+    this.slowMoFactor = 1.0;
+    this.isTargetAnnounced = false;
     
-    // 맵 높이 유동적 설정 (스피너 밸리는 2배 길이)
-    this.height = (mapType === 'spinner') ? 3600 : 1800;
+    const mapHeights = {
+      spinner: 3600,
+      'fate-doors': 3200,
+      'snakes-ladders': 3400
+    };
+    this.height = mapHeights[mapType] || 1800;
 
     World.clear(this.world, false);
     this.spinners = [];
@@ -145,6 +152,12 @@ window.MarbleGame = {
     this.finishSensor = common.finishSensor;
     this.funnelY = common.funnelY;
 
+    // 신규 장거리 맵은 각자의 전용 피니시 기믹을 사용한다.
+    if (mapType === 'fate-doors' || mapType === 'snakes-ladders') {
+      common.punches.forEach(punch => Composite.remove(this.world, punch));
+      common.punches = [];
+    }
+
     // 프리셋 맵 로드
     let mapData;
     if (mapType === 'pinball') {
@@ -155,6 +168,10 @@ window.MarbleGame = {
       mapData = window.MarbleMaps.createZigzagMap(this.world, this.width, this.height);
     } else if (mapType === 'vortex') {
       mapData = window.MarbleMaps.createVortexMap(this.world, this.width, this.height);
+    } else if (mapType === 'fate-doors') {
+      mapData = window.MarbleMaps.createFateDoorsMap(this.world, this.width, this.height);
+    } else if (mapType === 'snakes-ladders') {
+      mapData = window.MarbleMaps.createSnakesAndLaddersMap(this.world, this.width, this.height);
     }
 
     if (mapData && mapData.spinners) {
@@ -183,7 +200,7 @@ window.MarbleGame = {
 
       const radius = 16; // 구슬 크기 키움 (기존 12)
       const body = Bodies.circle(x, y, radius, {
-        restitution: 0.7,   // 통통 튀는 정도 증가 (기존 0.5)
+        restitution: 0.9,   // 모든 맵에서 통통 튀는 움직임 강화
         friction: 0.0,
         density: 0.0005,    // 질량 가벼워짐 (기존 0.001)
         label: 'marble',
@@ -201,6 +218,7 @@ window.MarbleGame = {
         nextSkillTime: Date.now() + 2000 + Math.random() * 2000,
         skillActiveTime: 0,
         portalCooldownTime: 0,
+        usedPortals: new Set(),
         isFinished: false,
         finishTime: null
       };
@@ -340,10 +358,6 @@ window.MarbleGame = {
     this.targetZoom = 1.0;
     this.zoomFocusX = this.width / 2;
     this.zoomFocusY = this.viewportHeight / 2;
-    this.slowMoFactor = 1.0;
-    this.isTargetAnnounced = false;
-    this.setSpeed(1.0); // 초기 속도 복구
-    
     // 맵 재생성 (핀볼 숲 등의 장애물 랜덤성 다시 부여)
     this.loadMap(this.currentMapType);
 
@@ -367,6 +381,7 @@ window.MarbleGame = {
       marble.finishTime = null;
       marble.trail = [];
       marble.portalCooldownTime = 0;
+      marble.usedPortals.clear();
       marble.body.collisionFilter.mask = 0xFFFFFFFF;
       
       Body.setPosition(marble.body, { x: x, y: y });
@@ -475,8 +490,9 @@ window.MarbleGame = {
       // 1. 순간이동 포탈 감지
       if (now > marble.portalCooldownTime) {
         for (let portal of portals) {
+          if (portal.singleUse && marble.usedPortals.has(portal.portalId)) continue;
           const dist = Vector.magnitude(Vector.sub(portal.position, pos));
-          if (dist < 30) {
+          if (dist < (portal.triggerRadius || 30)) {
             this.triggerPortalTransfer(marble, portal, now);
             break;
           }
@@ -527,6 +543,7 @@ window.MarbleGame = {
     const target = portal.targetPos;
 
     marble.portalCooldownTime = now + 2200;
+    if (portal.singleUse) marble.usedPortals.add(portal.portalId);
 
     this.createPortalFlashParticles(body.position.x, body.position.y, portal.portalColor);
     Body.setPosition(body, { x: target.x, y: target.y });
@@ -546,12 +563,22 @@ window.MarbleGame = {
       const body = marble.body;
       const pos = body.position;
 
-      if (pos.y > this.funnelY - 180 && pos.y < this.funnelY + 50) {
+      const finishY = this.finishSensor ? this.finishSensor.position.y : this.funnelY + 300;
+      if (pos.y > finishY + 80) {
+        Body.setPosition(body, { x: this.width / 2 + (Math.random() - 0.5) * 40, y: this.funnelY - 120 });
+        Body.setVelocity(body, { x: (Math.random() - 0.5) * 2, y: 3.5 });
+        return;
+      }
+
+      if (pos.y > this.funnelY - 180 && pos.y < finishY + 20) {
         const speed = Vector.magnitude(body.velocity);
+        if (pos.y > this.funnelY + 70) {
+          Body.applyForce(body, pos, { x: 0, y: 0.0012 * body.mass });
+        }
         if (speed < 0.25) {
           Body.applyForce(body, pos, {
             x: (Math.random() - 0.5) * 0.00075 * body.mass,
-            y: 0.00035 * body.mass
+            y: 0.0008 * body.mass
           });
         }
       }
@@ -741,6 +768,7 @@ window.MarbleGame = {
       if (body.label === 'portal_in' || body.label === 'portal_out') {
         const pos = body.position;
         const color = body.portalColor;
+        const radius = body.portalRadius || 18;
         const pulse = 1 + Math.sin(now * 0.008) * 0.08;
 
         ctx.save();
@@ -748,19 +776,29 @@ window.MarbleGame = {
         ctx.shadowColor = color;
         
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 18 * pulse, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, radius * pulse, 0, Math.PI * 2);
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 10, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, radius * 0.55, 0, Math.PI * 2);
         ctx.fillStyle = '#060813';
         ctx.fill();
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
         ctx.stroke();
+
+        if (body.portalIcon) {
+          ctx.setLineDash([]);
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `bold ${Math.max(13, radius * 0.7)}px Noto Sans KR`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(body.portalIcon, pos.x, pos.y + 1);
+        }
 
         ctx.restore();
       }
@@ -823,13 +861,26 @@ window.MarbleGame = {
         ctx.fillText('SLOW ZONE', pos.x, pos.y + 4);
         ctx.restore();
       }
+
+      if (body.label === 'map_sign') {
+        ctx.save();
+        ctx.font = `800 ${body.signFontSize || 18}px Noto Sans KR`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = body.signColor || '#f8fafc';
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+        ctx.fillText(body.signText || '', body.position.x, body.position.y);
+        ctx.restore();
+      }
     });
 
     // 2. 일반 맵 장애물 및 벽체 렌더링
     bodies.forEach(body => {
       if (body.label === 'marble' || body.label === 'finish_sensor' || 
           body.label === 'portal_in' || body.label === 'portal_out' || 
-          body.label === 'booster' || body.label === 'slow_zone') return;
+          body.label === 'booster' || body.label === 'slow_zone' ||
+          body.label === 'map_sign') return;
 
       ctx.beginPath();
       const partsToDraw = body.parts.length > 1 ? body.parts.slice(1) : [body];
@@ -853,9 +904,9 @@ window.MarbleGame = {
         ctx.shadowBlur = 0;
       } 
       else if (body.label === 'spinner') {
-        ctx.fillStyle = '#8b5cf6';
-        ctx.strokeStyle = '#c084fc';
-        ctx.lineWidth = 2;
+        ctx.fillStyle = body.render.fillStyle || '#8b5cf6';
+        ctx.strokeStyle = body.render.strokeStyle || '#c084fc';
+        ctx.lineWidth = body.render.lineWidth || 2;
         ctx.fill();
         ctx.stroke();
       } 

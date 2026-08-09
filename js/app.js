@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 내부 상태 데이터
   let marblesList = []; // { id, name, color }
   let resultModalTimeout = null;
+  let highlightOverlayTimeout = null;
 
   // 13가지 확연히 구분되는 파스텔 네온 색상 리스트
   const neon13Colors = [
@@ -316,12 +317,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnReset.addEventListener('click', () => {
     window.MarbleGame.reset();
+    speedBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.speed === '1'));
     resultOverlay.classList.add('hidden');
     
     // 진행 중이던 모달 타이머가 있다면 즉시 취소
     if (resultModalTimeout) {
       clearTimeout(resultModalTimeout);
       resultModalTimeout = null;
+    }
+
+    if (highlightOverlayTimeout) {
+      clearTimeout(highlightOverlayTimeout);
+      highlightOverlayTimeout = null;
     }
     
     // 당첨 모달도 숨기기
@@ -348,6 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 맵 변경 핸들러
   mapSelector.addEventListener('change', () => {
     window.MarbleGame.loadMap(mapSelector.value);
+    speedBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.speed === '1'));
     syncMarblesToPhysics();
   });
 
@@ -501,6 +509,12 @@ document.addEventListener('DOMContentLoaded', () => {
       hName.textContent = marble.name;
       hName.style.color = marble.color;
       hOverlay.classList.remove('hidden');
+
+      if (highlightOverlayTimeout) clearTimeout(highlightOverlayTimeout);
+      highlightOverlayTimeout = setTimeout(() => {
+        hOverlay.classList.add('hidden');
+        highlightOverlayTimeout = null;
+      }, 3000);
 
       // 화려한 파티클
       confetti({
