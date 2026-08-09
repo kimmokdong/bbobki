@@ -134,6 +134,7 @@ window.MarbleGame = {
     
     const mapHeights = {
       spinner: 3600,
+      zigzag: 2800,
       'fate-doors': 3200,
       'snakes-ladders': 3400
     };

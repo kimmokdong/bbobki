@@ -372,53 +372,132 @@ window.MarbleMaps = {
     const items = [];
     const spinners = [];
 
-    const slideOptions = {
-      isStatic: true,
-      restitution: 0.4,
-      friction: 0.002, // 슬라이딩 미끄러짐 극대화
-      render: { fillStyle: '#1e293b' }
+    const angles = [0.24, -0.27, 0.22, -0.29, 0.25, -0.23, 0.28, -0.24, 0.27, -0.25];
+    const slides = angles.map((angle, index) => ({
+      x: index % 2 === 0 ? 285 : width - 285,
+      y: 210 + index * 225,
+      w: 650,
+      h: 16,
+      angle
+    }));
+    const choiceSlides = new Set([2, 5, 8]);
+    const turnSlides = new Set([0, 3, 6]);
+    const shuffleSlides = new Set([1, 4, 7]);
+
+    const pointOnSlide = (slide, localX, lift = 0) => ({
+      x: slide.x + localX * Math.cos(slide.angle) + lift * Math.sin(slide.angle),
+      y: slide.y + localX * Math.sin(slide.angle) - lift * Math.cos(slide.angle)
+    });
+
+    const addRail = (slide, localX, length, index) => {
+      const point = pointOnSlide(slide, localX);
+      items.push(Bodies.rectangle(point.x, point.y, length, slide.h, {
+        isStatic: true,
+        label: 'zigzag_slide',
+        angle: slide.angle,
+        restitution: 0.22,
+        friction: 0,
+        frictionStatic: 0,
+        render: {
+          fillStyle: index % 2 === 0 ? '#17365f' : '#3b1f5f',
+          strokeStyle: index % 2 === 0 ? '#38bdf8' : '#c084fc',
+          lineWidth: 2
+        }
+      }));
     };
 
-    // 지그재그 사선 슬라이드들
-    const slides = [
-      { x: 260, y: 220, w: 580, h: 16, angle: 0.16 },
-      { x: width - 260, y: 440, w: 580, h: 16, angle: -0.16 },
-      { x: 260, y: 660, w: 580, h: 16, angle: 0.16 },
-      { x: width - 260, y: 880, w: 580, h: 16, angle: -0.16 },
-      { x: 260, y: 1100, w: 580, h: 16, angle: 0.16 },
-      { x: width - 260, y: 1320, w: 580, h: 16, angle: -0.16 }
-    ];
+    // 기존 부스터의 수직 하방 힘을 덮어써 경사면 진행 방향으로만 밀어 준다.
+    const addSlideCurrent = (slide, localX, length) => {
+      const point = pointOnSlide(slide, localX, 27);
+      const horizontalForce = 0.0176;
+      const verticalForce = 0.0044;
+      const direction = Math.sign(slide.angle);
+      const current = this.createBooster(world, point.x, point.y, length, 46, slide.angle, horizontalForce);
+      current.forceVector = {
+        x: direction * Math.cos(slide.angle) * horizontalForce,
+        y: Math.abs(Math.sin(slide.angle)) * verticalForce
+      };
+    };
 
-    slides.forEach(s => {
-      items.push(Bodies.rectangle(s.x, s.y, s.w, s.h, { ...slideOptions, angle: s.angle }));
+    slides.forEach((slide, index) => {
+      const direction = Math.sign(slide.angle);
 
-      const dir = s.angle > 0 ? 1 : -1;
-      const lipX = dir === 1 ? s.x + s.w / 2 - 30 : s.x - s.w / 2 + 30;
-      const lipY = s.y + Math.abs(s.w / 2 * Math.sin(s.angle)) - 10;
-      
-      // 도약턱
-      items.push(Bodies.rectangle(lipX, lipY, 20, 20, {
-        isStatic: true, angle: s.angle - dir * 0.4, render: { fillStyle: '#f59e0b' }
-      }));
+      if (choiceSlides.has(index)) {
+        // 점프에 성공하면 판을 계속 타고, 실패하면 다음 판으로 먼저 떨어지는 추월 분기점.
+        const gap = 82;
+        const segmentLength = (slide.w - gap) / 2;
+        [-1, 1].forEach(side => {
+          const localX = side * (gap / 2 + segmentLength / 2);
+          addRail(slide, localX, segmentLength, index);
+          addSlideCurrent(slide, localX, segmentLength - 34);
+        });
 
-      // 가이드 벽
-      const wallX = dir === 1 ? width - 20 : 20;
-      items.push(Bodies.rectangle(wallX, s.y + 120, 16, 120, {
-        isStatic: true, render: { fillStyle: '#334155' }
-      }));
+        const kickerPoint = pointOnSlide(slide, -direction * (gap / 2 + 20), 24);
+        items.push(Bodies.circle(kickerPoint.x, kickerPoint.y, 14, {
+          isStatic: true,
+          label: 'zigzag_bumper',
+          restitution: 1.35,
+          friction: 0,
+          render: { fillStyle: '#f59e0b', strokeStyle: '#fde68a', lineWidth: 3 }
+        }));
+        this.createSign(world, slide.x, slide.y - 62, '⚡ 점프 or 지름길', '#fbbf24', 16);
+      } else {
+        addRail(slide, 0, slide.w, index);
+        addSlideCurrent(slide, 0, slide.w - 70);
+      }
+
+      if (shuffleSlides.has(index)) {
+        // 서로 다른 크기의 범퍼가 구슬 무리를 흩어 추월 공간을 만든다.
+        [-80, 95].forEach((progress, bumperIndex) => {
+          const point = pointOnSlide(slide, direction * progress, bumperIndex === 0 ? 25 : 29);
+          items.push(Bodies.circle(point.x, point.y, bumperIndex === 0 ? 13 : 17, {
+            isStatic: true,
+            label: 'zigzag_bumper',
+            restitution: 1.25,
+            friction: 0,
+            render: {
+              fillStyle: bumperIndex === 0 ? '#06b6d4' : '#ec4899',
+              strokeStyle: bumperIndex === 0 ? '#a5f3fc' : '#fbcfe8',
+              lineWidth: 3
+            }
+          }));
+        });
+      }
+
+      if (turnSlides.has(index)) {
+        const exit = pointOnSlide(slide, direction * (slide.w / 2 - 8));
+        const nextSlide = slides[index + 1];
+        const nextDirection = Math.sign(nextSlide.angle);
+        const entrance = pointOnSlide(nextSlide, -nextDirection * (nextSlide.w / 2 - 8));
+        const spinner = this.addSpinner(
+          world,
+          (exit.x + entrance.x) / 2,
+          (exit.y + entrance.y) / 2,
+          135,
+          13,
+          direction > 0 ? -0.052 : 0.052
+        );
+        Body.setAngle(spinner, direction * 0.22);
+        spinner.render.fillStyle = '#f97316';
+        spinner.render.strokeStyle = '#fed7aa';
+        spinners.push(spinner);
+      }
     });
 
     Composite.add(world, items);
 
-    // [기믹 배치]
-    // 1. 슬라이드 슬로프 중간에 '가속 부스터 패드'를 달아 구슬이 점프대에서 폭발적으로 날아가게 함
-    this.createBooster(world, 180, 200, 80, 15, 0.16, 0.0035);
-    this.createBooster(world, width - 180, 420, 80, 15, -0.16, 0.0035);
-    this.createBooster(world, 180, 1080, 80, 15, 0.16, 0.0035);
+    this.createSign(world, width / 2, 105, '급경사 10단 · 점프홀에서 순위가 뒤집힌다!', '#7dd3fc', 20);
 
-    // 2. 포탈 루프 설치 (하방 y=1200 부근의 대형 블랙홀 포탈을 통해 최상단으로 구슬을 던져 역전 연출)
-    // 20% 확률 혹은 스킬 작동 유도를 위해 깔대기 진입 전 중앙에 흡입 포탈을 두고 상단으로 던짐
-    this.createPortalPair(world, width / 2, 1200, width / 2, 120, '#e11d48');
+    // 결승 직전 두 회전 막대가 좌우로 벌어진 구슬을 다시 섞는다.
+    const finalMixers = [
+      this.addSpinner(world, width / 2, height - 390, 360, 18, 0.034),
+      this.addSpinner(world, width / 2, height - 290, 220, 16, -0.049)
+    ];
+    finalMixers[0].render.fillStyle = '#0ea5e9';
+    finalMixers[0].render.strokeStyle = '#bae6fd';
+    finalMixers[1].render.fillStyle = '#a855f7';
+    finalMixers[1].render.strokeStyle = '#e9d5ff';
+    spinners.push(...finalMixers);
 
     return { spinners };
   },
