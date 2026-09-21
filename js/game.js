@@ -27,6 +27,8 @@ window.MarbleGame = {
   // 카메라 뷰포트 Y축 좌표 (부드러운 추적용)
   viewportY: 0,
   cameraTarget: null,
+  cameraMode: 'auto',
+  manualCameraY: 450,
   
   // 센서 정보
   finishSensor: null,
@@ -93,6 +95,13 @@ window.MarbleGame = {
           
           const marble = bodyA.label === 'marble' ? bodyA : bodyB;
           const obstacle = bodyA.label === 'marble' ? bodyB : bodyA;
+          const now = this.engine.timing.timestamp;
+          // 같은 범퍼가 에너지를 계속 보충해 제자리 왕복하는 현상을 막는다.
+          if (this.currentMapType === 'pinball' && obstacle.label === 'bumper') {
+            const hits = marble.marbleRef.bumperHits;
+            if (now - (hits.get(obstacle.id) ?? -Infinity) < 1000) return;
+            hits.set(obstacle.id, now);
+          }
           
           // 장애물의 중심에서 구슬을 밀어내는 방향 계산
           let vx = (Math.random() - 0.5) * 8; // 좌우 분산
@@ -103,8 +112,9 @@ window.MarbleGame = {
             const dx = marble.position.x - obstacle.position.x;
             const dy = marble.position.y - obstacle.position.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            vx = (dx / dist) * 15;
-            vy = (dy / dist) * 15 - 5; // 범퍼는 맞은 방향으로 강하게 튕김 (약간 위쪽 보정)
+            const impulse = this.currentMapType === 'pinball' ? 9 : 15;
+            vx = (dx / dist) * impulse;
+            vy = (dy / dist) * impulse - (this.currentMapType === 'pinball' ? 1 : 5);
           }
 
           Body.setVelocity(marble, { x: vx, y: vy });
@@ -121,6 +131,8 @@ window.MarbleGame = {
     this.viewportY = 0;
     this.cameraTarget = null;
 
+    this.setupCollisionEvents();
+    window.MarbleOverview.init(this);
     // 커스텀 루프 시작
     this.startLoop();
   },
@@ -133,20 +145,27 @@ window.MarbleGame = {
     this.isTargetAnnounced = false;
     
     const mapHeights = {
-      spinner: 3600,
-      zigzag: 2800,
-      'fate-doors': 3200,
-      'snakes-ladders': 3400
+      pinball: 3200,
+      vortex: 3600,
+      spinner: 4200,
+      zigzag: 3400,
+      'fate-doors': 3800,
+      'snakes-ladders': 4000
     };
     this.height = mapHeights[mapType] || 1800;
 
     World.clear(this.world, false);
+    Engine.clear(this.engine);
     this.spinners = [];
     this.punches = [];
     this.particles = [];
     this.finishedMarbles = [];
     this.viewportY = 0;
     this.cameraTarget = null;
+    this.resumeCameraTracking();
+    this.cameraZoom = this.targetZoom = 1;
+    this.zoomFocusX = this.width / 2;
+    this.zoomFocusY = this.viewportHeight / 2;
 
     // 공통 바운더리 생성
     const common = window.MarbleMaps.createCommonBoundaries(this.world, this.width, this.height);
@@ -160,6 +179,7 @@ window.MarbleGame = {
     }
 
     // 프리셋 맵 로드
+    const boundaryIds = new Set(Composite.allBodies(this.world).map(body => body.id));
     let mapData;
     if (mapType === 'pinball') {
       mapData = window.MarbleMaps.createPinballMap(this.world, this.width, this.height);
@@ -170,9 +190,21 @@ window.MarbleGame = {
     } else if (mapType === 'vortex') {
       mapData = window.MarbleMaps.createVortexMap(this.world, this.width, this.height);
     } else if (mapType === 'fate-doors') {
-      mapData = window.MarbleMaps.createFateDoorsMap(this.world, this.width, this.height);
+      mapData = window.MarbleMaps.createFateDoorsMap(this.world, this.width, 3200);
     } else if (mapType === 'snakes-ladders') {
-      mapData = window.MarbleMaps.createSnakesAndLaddersMap(this.world, this.width, this.height);
+      mapData = window.MarbleMaps.createSnakesAndLaddersMap(this.world, this.width, 3400);
+    }
+
+    // 수작업 관문은 간격을 늘리고, 결승 전 700px는 그대로 이동해 마지막 함정 위치를 유지한다.
+    const layoutHeight = { 'fate-doors': 3200, 'snakes-ladders': 3400 }[mapType];
+    if (layoutHeight) {
+      const pivotY = layoutHeight - 890;
+      const extra = this.height - layoutHeight;
+      const stretchY = y => y < 100 ? y : y + extra * Math.min(1, (y - 100) / (pivotY - 100));
+      Composite.allBodies(this.world).filter(body => !boundaryIds.has(body.id)).forEach(body => {
+        Body.setPosition(body, { x: body.position.x, y: stretchY(body.position.y) });
+        if (body.targetPos) body.targetPos.y = stretchY(body.targetPos.y);
+      });
     }
 
     if (mapData && mapData.spinners) {
@@ -181,7 +213,6 @@ window.MarbleGame = {
 
     this.punches = common.punches || [];
 
-    this.setupCollisionEvents();
   },
 
   // 구슬들 세팅 및 스폰
@@ -190,6 +221,7 @@ window.MarbleGame = {
     this.marbles = [];
     this.finishedMarbles = [];
     this.viewportY = 0;
+    this.resumeCameraTracking();
 
     const spacing = Math.min(600 / (marbleConfigs.length + 1), 40);
     const startY = 40;
@@ -216,10 +248,15 @@ window.MarbleGame = {
         trail: [],
         maxTrailLength: 15,
         skillCooldown: 2000 + Math.random() * 3000,
-        nextSkillTime: Date.now() + 2000 + Math.random() * 2000,
+        nextSkillTime: this.engine.timing.timestamp + 2000 + Math.random() * 2000,
         skillActiveTime: 0,
         portalCooldownTime: 0,
         usedPortals: new Set(),
+        bumperHits: new Map(),
+        progressY: y,
+        progressAt: this.engine.timing.timestamp,
+        lastNudgeAt: this.engine.timing.timestamp,
+        recoveryCount: 0,
         isFinished: false,
         finishTime: null
       };
@@ -383,6 +420,10 @@ window.MarbleGame = {
       marble.trail = [];
       marble.portalCooldownTime = 0;
       marble.usedPortals.clear();
+      marble.bumperHits.clear();
+      marble.progressY = y;
+      marble.progressAt = marble.lastNudgeAt = this.engine.timing.timestamp;
+      marble.recoveryCount = 0;
       marble.body.collisionFilter.mask = 0xFFFFFFFF;
       
       Body.setPosition(marble.body, { x: x, y: y });
@@ -390,7 +431,7 @@ window.MarbleGame = {
       Body.setAngularVelocity(marble.body, 0);
       Body.setAngle(marble.body, 0);
 
-      marble.nextSkillTime = Date.now() + 2000 + Math.random() * 2000;
+      marble.nextSkillTime = this.engine.timing.timestamp + 2000 + Math.random() * 2000;
       marble.skillActiveTime = 0;
 
       // loadMap 과정에서 월드가 초기화되었으므로 구슬을 다시 추가
@@ -428,24 +469,16 @@ window.MarbleGame = {
       requestAnimationFrame(loop);
       
       if (!this.isPaused) {
-        const dt = (time - lastTime) || 16.666;
+        const dt = Math.min(Math.max(time - lastTime, 0), 50) || 16.666;
         
         // 슬로우 모션 적용 (slowMoFactor)
         const currentSpeed = this.gameSpeed * this.slowMoFactor;
-        const steps = Math.ceil(currentSpeed);
-        const stepSize = (16.666 * currentSpeed) / steps;
+        const steps = Math.max(1, Math.ceil(dt * currentSpeed / 16.666));
+        const stepSize = dt * currentSpeed / steps;
         
         for (let i = 0; i < steps; i++) {
-          this.updateSpinners();
-          this.updatePunches();
-          this.processMapGimmicks();
-          this.applyJitterToFunnels();
-          
-          if (this.enableSkills) {
-            this.processSkills();
-          }
-
-          Engine.update(this.engine, stepSize);
+          this.stepPhysics(stepSize);
+          if (this.isPaused) break;
         }
       }
 
@@ -458,25 +491,36 @@ window.MarbleGame = {
     requestAnimationFrame(loop);
   },
 
-  updateSpinners: function() {
+  // 본 경기와 회귀 검증이 같은 물리 경로를 사용한다. 시간은 배속·슬로모션을 반영한 엔진 시간이다.
+  stepPhysics: function(delta) {
+    this.updateSpinners(delta);
+    this.updatePunches();
+    this.processMapGimmicks(delta);
+    this.applyJitterToFunnels();
+    if (this.enableSkills) this.processSkills();
+    Engine.update(this.engine, delta);
+    this.recoverStalledMarbles();
+  },
+
+  updateSpinners: function(delta = 16.666) {
     this.spinners.forEach(spinner => {
-      const nextAngle = spinner.angle + spinner.rotationSpeed * this.gameSpeed;
+      const nextAngle = spinner.angle + spinner.rotationSpeed * delta / 16.666;
       Body.setAngle(spinner, nextAngle);
     });
   },
 
   updatePunches: function() {
-    const time = Date.now();
+    const time = this.engine.timing.timestamp;
     this.punches.forEach(punch => {
-      const offset = Math.sin(time * punch.offsetSpeed * this.gameSpeed) * 160 * punch.direction;
+      const offset = Math.sin(time * punch.offsetSpeed) * 160 * punch.direction;
       Body.setPosition(punch, { x: punch.startX + offset, y: punch.position.y });
     });
   },
 
   // 창의적 기믹(포탈, 가속 패드, 감속 늪) 실시간 물리 처리
-  processMapGimmicks: function() {
+  processMapGimmicks: function(delta = 16.666) {
     const bodies = Composite.allBodies(this.world);
-    const now = Date.now();
+    const now = this.engine.timing.timestamp;
 
     const portals = bodies.filter(b => b.label === 'portal_in');
     const boosters = bodies.filter(b => b.label === 'booster');
@@ -520,8 +564,8 @@ window.MarbleGame = {
       for (let slowZone of slowZones) {
         if (this.isPointInRectangle(pos, slowZone)) {
           Body.setVelocity(body, {
-            x: body.velocity.x * 0.76,
-            y: body.velocity.y * 0.76
+            x: body.velocity.x * Math.pow(0.90, delta / 16.666),
+            y: Math.max(1.2, body.velocity.y * Math.pow(0.90, delta / 16.666))
           });
 
           if (Math.random() < 0.1) {
@@ -549,11 +593,63 @@ window.MarbleGame = {
     this.createPortalFlashParticles(body.position.x, body.position.y, portal.portalColor);
     Body.setPosition(body, { x: target.x, y: target.y });
     Body.setVelocity(body, { x: (Math.random() - 0.5) * 1.5, y: 3.5 });
+    marble.progressY = target.y;
+    marble.progressAt = marble.lastNudgeAt = now;
+    marble.trail = [];
     this.createPortalFlashParticles(target.x, target.y, '#f97316');
   },
 
   isPointInRectangle: function(point, rect) {
     return Matter.Vertices.contains(rect.vertices, point);
+  },
+
+  // 정지뿐 아니라 같은 높이에서 반복해서 튀는 경우도 감지한다. 모든 구슬에 같은 기준을 적용한다.
+  recoverStalledMarbles: function() {
+    const now = this.engine.timing.timestamp;
+    let obstacles;
+    this.marbles.forEach(marble => {
+      if (marble.isFinished) return;
+      const body = marble.body;
+      const pos = body.position;
+      if (pos.y > marble.progressY + 60) {
+        marble.progressY = pos.y;
+        marble.progressAt = now;
+      }
+      const stalledFor = now - marble.progressAt;
+      if (stalledFor < 4000) return;
+
+      if (stalledFor >= 10000) {
+        obstacles ||= Composite.allBodies(this.world).filter(obstacle => !obstacle.isSensor);
+        // 결승 센서를 건너뛰지 않고, 실제로 구슬 하나가 들어갈 빈 공간만 찾는다.
+        const radius = body.circleRadius + 3;
+        const probe = Bodies.circle(0, 0, radius);
+        const finishY = this.finishSensor.position.y;
+        const startY = Math.min(Math.max(pos.y, marble.progressY) + 70, finishY - 80);
+        const offsets = [0, -48, 48, -100, 100, -180, 180, -300, 300];
+        const side = Math.random() < 0.5 ? -1 : 1;
+        for (let y = startY; y <= Math.min(startY + 440, finishY - 40); y += 35) {
+          const inFinishTube = y > this.funnelY + 110;
+          for (const offset of inFinishTube ? [0] : offsets) {
+            const x = inFinishTube ? this.width / 2 : Math.max(radius + 2, Math.min(this.width - radius - 2, pos.x + offset * side));
+            Body.setPosition(probe, { x, y });
+            if (Matter.Query.collides(probe, obstacles.filter(other => other !== body)).length) continue;
+            this.createPortalFlashParticles(pos.x, pos.y, '#7dd3fc');
+            Body.setPosition(body, { x, y });
+            Body.setVelocity(body, { x: side * 1.5, y: 3 });
+            marble.progressY = y;
+            marble.progressAt = marble.lastNudgeAt = now;
+            marble.recoveryCount++;
+            marble.trail = [];
+            return;
+          }
+        }
+      }
+      if (now - marble.lastNudgeAt >= 1800) {
+        Body.setVelocity(body, { x: (Math.random() < 0.5 ? -1 : 1) * 3.5, y: -4 });
+        marble.lastNudgeAt = now;
+        this.createWindWaveParticles(pos.x, pos.y, '#7dd3fc');
+      }
+    });
   },
 
   // 결승 통로 교착 상태 해소용 Jitter 쉐이킹
@@ -588,7 +684,7 @@ window.MarbleGame = {
 
   // 장풍 스킬 처리
   processSkills: function() {
-    const now = Date.now();
+    const now = this.engine.timing.timestamp;
 
     this.marbles.forEach(marble => {
       if (marble.isFinished) return;
@@ -654,36 +750,36 @@ window.MarbleGame = {
           y: reactionDirection.y * reactionMagnitude 
         });
 
-        // 기존 로직: 작은 장애물(펙 등)은 일시적으로 튕겨나감
-        const bWidth = bounds.max.x - bounds.min.x;
-        const bHeight = bounds.max.y - bounds.min.y;
-        if (bWidth <= 100 && bHeight <= 100 && staticBody.label !== 'punch') {
-          const bodyDistVector = Vector.sub(staticBody.position, body.position);
-          const bodyDist = Vector.magnitude(bodyDistVector);
-          
-          if (bodyDist < radius * 0.7 && bodyDist > 1) {
-            const originalPos = { x: staticBody.position.x, y: staticBody.position.y };
-            const originalAngle = staticBody.angle;
-
-            Body.setStatic(staticBody, false);
-            Body.setMass(staticBody, 5);
-            
-            const forceMagnitude = (1 - bodyDist / radius) * 0.008;
-            const forceDirection = Vector.normalise(bodyDistVector);
-            Body.applyForce(staticBody, staticBody.position, Vector.mult(forceDirection, forceMagnitude));
-
-            setTimeout(() => {
-              Body.setStatic(staticBody, true);
-              Body.setPosition(staticBody, originalPos);
-              Body.setAngle(staticBody, originalAngle);
-            }, 300);
-          }
-        }
+        // 장애물을 이동했다 되돌리면 구슬 속에 다시 생성될 수 있어 반작용만 적용한다.
       }
     });
   },
 
   // 카메라 뷰포트 Y축 갱신
+  getWorldHeight: function() {
+    return Math.max(this.height, (this.finishSensor?.position.y || this.height) + 80);
+  },
+
+  getCameraBounds: function() {
+    const width = this.width / this.cameraZoom;
+    const height = this.viewportHeight / this.cameraZoom;
+    return { x: this.zoomFocusX - width / 2, y: this.zoomFocusY - height / 2, width, height };
+  },
+
+  setManualCamera: function(centerY) {
+    this.cameraMode = 'manual';
+    this.cameraZoom = this.targetZoom = 1;
+    this.manualCameraY = Math.max(this.viewportHeight / 2,
+      Math.min(this.getWorldHeight() - this.viewportHeight / 2, centerY));
+    this.viewportY = this.manualCameraY - this.viewportHeight / 2;
+    this.zoomFocusX = this.width / 2;
+    this.zoomFocusY = this.manualCameraY;
+  },
+
+  resumeCameraTracking: function() {
+    this.cameraMode = 'auto';
+  },
+
   updateCameraViewport: function() {
     let targetY = 0;
 
@@ -711,7 +807,13 @@ window.MarbleGame = {
       this.slowMoFactor = 1.0;
     }
 
-    const maxViewportY = this.height - this.viewportHeight;
+    // 탐색 중에도 당첨 구슬 기준 슬로모션은 유지하며 화면의 위치만 수동으로 제어한다.
+    if (this.cameraMode === 'manual') {
+      this.targetZoom = 1;
+      this.viewportY = this.manualCameraY - this.viewportHeight / 2;
+      return;
+    }
+    const maxViewportY = this.getWorldHeight() - this.viewportHeight;
     if (targetY < 0) targetY = 0;
     if (targetY > maxViewportY) targetY = maxViewportY;
 
@@ -746,7 +848,7 @@ window.MarbleGame = {
     const canvasCenterY = this.viewportHeight / 2;
     
     // 포커스할 대상 좌표 부드럽게 추적
-    if (this.cameraZoom > 1.05 && this.cameraTarget) {
+    if (this.cameraMode === 'auto' && this.cameraZoom > 1.05 && this.cameraTarget) {
       this.zoomFocusX += (this.cameraTarget.body.position.x - this.zoomFocusX) * 0.1;
       this.zoomFocusY += (this.cameraTarget.body.position.y - this.zoomFocusY) * 0.1;
     } else {
@@ -1044,6 +1146,7 @@ window.MarbleGame = {
     });
 
     ctx.restore();
+    window.MarbleOverview.render(this, bodies);
   },
 
   // ----------------------------------------------------

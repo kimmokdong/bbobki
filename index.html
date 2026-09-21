@@ -118,6 +118,7 @@
 
     <!-- 2. 중앙 게임 시뮬레이터 캔버스 영역 -->
     <main id="game-canvas-area">
+      <div id="race-view">
       <!-- 카메라 추적 대상 표시 레이어 -->
       <div id="camera-focus-badge" class="camera-badge hidden">
         🎯 당첨 후보: <span id="camera-target-name">-</span> <span id="camera-target-rank"></span>
@@ -143,6 +144,17 @@
           <div id="highlight-name" class="highlight-name">이름</div>
         </div>
       </div>
+      </div>
+      <aside id="map-overview" aria-label="전체 맵 미리보기">
+        <div class="overview-heading"><h2>전체 맵</h2><span class="overview-live">LIVE</span></div>
+        <p id="overview-mode">당첨 후보 자동 추적</p>
+        <div class="overview-map-frame">
+          <canvas id="overview-canvas" tabindex="0" role="slider" aria-label="보고 싶은 맵 위치" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0" aria-describedby="overview-help"></canvas>
+        </div>
+        <div class="overview-footer"><span id="overview-count">도착 0 / 0</span><span>□ 현재 화면</span></div>
+        <button id="camera-follow" class="btn-secondary" disabled>🎯 자동 추적</button>
+        <p id="overview-help">클릭·드래그로 화면 이동<br>↑↓ 이동 · Esc 자동 추적</p>
+      </aside>
     </main>
 
     <!-- 3. 우측 실시간 순위 패널 (상시 고정 노출) -->
@@ -159,6 +171,7 @@
 
   <!-- Scripts -->
   <script src="js/maps.js"></script>
+  <script src="js/minimap.js"></script>
   <script src="js/game.js"></script>
   <script src="js/app.js"></script>
 </body>

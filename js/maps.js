@@ -223,29 +223,33 @@ window.MarbleMaps = {
   // ----------------------------------------------------
   createPinballMap: function(world, width, height) {
     const startY = 150;
-    const endY = height - 170; // 제일 아랫줄 핀 제거 (height - 80에서 수정)
+    const endY = height - 430; // 깔때기와 핀이 겹치지 않도록 결승 진입 공간 확보
     const items = [];
     const spinners = [];
 
-    // 펙 격자 생성 (기둥 제거 및 마찰 최소화)
-    const rowSpacing = 85;
-    const colSpacing = 72;
+    const slowZones = [
+      [width / 4, height * 0.2], [3 * width / 4, height * 0.38],
+      [width / 3, height * 0.57], [2 * width / 3, height * 0.76]
+    ];
+    // 범퍼 사이에도 구슬 두 개가 엇갈려 빠져나갈 여유를 둔다.
+    const rowSpacing = 100;
+    const colSpacing = 92;
     
     for (let y = startY; y < endY; y += rowSpacing) {
       const isEven = Math.round(y / rowSpacing) % 2 === 0;
       const startX = isEven ? colSpacing : colSpacing / 2;
       
-      for (let x = startX; x < width; x += colSpacing) {
-        if (y > height - 380 && (x < 140 || x > width - 140)) continue;
+      for (let x = startX; x < width - 35; x += colSpacing) {
+        // 늪 안에서 핀 위에 멈춰 서는 조합 자체를 만들지 않는다.
+        if (slowZones.some(([sx, sy]) => Math.abs(x - sx) < 115 && Math.abs(y - sy) < 65)) continue;
 
-        // 랜덤 범퍼 생성 확률 증가 (0.12 -> 0.18)
-        const isBumper = Math.random() < 0.18 && y > 300 && y < endY - 120;
+        const isBumper = Math.random() < 0.14 && y > 300 && y < endY - 120;
         
         if (isBumper) {
           items.push(Bodies.circle(x, y, 18, {
             isStatic: true,
             label: 'bumper',
-            restitution: 2.0,
+            restitution: 1.05,
             friction: 0,
             render: {
               fillStyle: '#10b981',
@@ -266,19 +270,12 @@ window.MarbleMaps = {
 
     Composite.add(world, items);
 
-    // [기믹 배치]
-    // 1. 감속 늪지대 4개 배치 (구슬 정체/전략 변화 확대)
-    this.createSlowZone(world, width / 4, 400, 150, 80);
-    this.createSlowZone(world, 3 * width / 4, 600, 150, 80);
-    this.createSlowZone(world, width / 3, 1000, 180, 80); // Y축 하향 조정
-    this.createSlowZone(world, 2 * width / 3, 1300, 180, 80); // Y축 대폭 하향
-
-    // 2. 가속 부스터 5개 배치 (속도감 증가)
-    this.createBooster(world, width / 2, 500, 120, 30, 0, 0.0025);
-    this.createBooster(world, width / 4, 750, 100, 30, 0.3, 0.0025);
-    this.createBooster(world, 3 * width / 4, 750, 100, 30, -0.3, 0.0025);
-    this.createBooster(world, width / 3, 1150, 120, 30, 0.2, 0.003);
-    this.createBooster(world, 2 * width / 3, 1450, 120, 30, -0.2, 0.003); // Y축 대폭 하향
+    slowZones.forEach(([x, y]) => this.createSlowZone(world, x, y, 150, 64));
+    this.createBooster(world, width / 2, height * 0.27, 120, 30, 0, 0.0025);
+    this.createBooster(world, width / 4, height * 0.46, 100, 30, 0.3, 0.0025);
+    this.createBooster(world, 3 * width / 4, height * 0.46, 100, 30, -0.3, 0.0025);
+    this.createBooster(world, width / 3, height * 0.65, 120, 30, 0.2, 0.003);
+    this.createBooster(world, 2 * width / 3, height * 0.82, 120, 30, -0.2, 0.003);
 
     return { spinners };
   },
@@ -375,7 +372,7 @@ window.MarbleMaps = {
     const angles = [0.24, -0.27, 0.22, -0.29, 0.25, -0.23, 0.28, -0.24, 0.27, -0.25];
     const slides = angles.map((angle, index) => ({
       x: index % 2 === 0 ? 285 : width - 285,
-      y: 210 + index * 225,
+      y: 210 + index * (height - 775) / (angles.length - 1),
       w: 650,
       h: 16,
       angle
@@ -518,28 +515,36 @@ window.MarbleMaps = {
       }
     }
 
-    // 소용돌이 벽면 생성
-    // 1. 소용돌이 1 (y = 580)
-    this.buildVortexFunnel(items, width / 2, 580, 240, true);
-    
-    // 2. 소용돌이 2 (y = 1050)
-    this.buildVortexFunnel(items, width / 2 - 120, 1050, 190, false);
-    this.buildVortexFunnel(items, width / 2 + 120, 1050, 190, true);
+    // 겹친 원형 벽 대신 입구·배수구가 열린 4단 소용돌이. 옆 소용돌이와도 겹치지 않는다.
+    const stages = [
+      { y: height * 0.172, xs: [width / 2], radius: 245 },
+      { y: height * 0.367, xs: [205, width - 205], radius: 155 },
+      { y: height * 0.567, xs: [width / 2], radius: 250 },
+      { y: height * 0.761, xs: [205, width - 205], radius: 155 }
+    ];
+    stages.forEach((stage, index) => {
+      stage.xs.forEach((x, lane) => {
+        this.buildVortexFunnel(items, x, stage.y, stage.radius);
+        const spinner = this.addSpinner(world, x, stage.y, stage.radius * 1.05, 12,
+          (index + lane) % 2 ? -0.026 : 0.026);
+        spinner.render.fillStyle = '#6d28d9';
+        spinners.push(spinner);
 
+        const next = stages[index + 1];
+        const outX = next ? next.xs[lane % next.xs.length] : (lane ? 550 : 250);
+        const outY = next ? next.y - next.radius - 65 : height - 520;
+        // 가장 아래로 모이는 지점에 포탈을 두고, 놓쳐도 열린 바닥으로 계속 내려간다.
+        const pair = this.createPortalPair(world, x, stage.y + stage.radius - 28,
+          outX, outY, index % 2 ? '#c084fc' : '#38bdf8', 24);
+        pair.portalIn.singleUse = true;
+        pair.portalIn.portalIcon = '↓';
+      });
+    });
     Composite.add(world, items);
-
-    // [기믹 배치]
-    // 1. 블랙홀 소용돌이 입구 3개 각각에 포탈 입구 설치
-    // 소용돌이 1의 중앙(580y)에 도달하면 소용돌이 2의 좌/우 사이드로 순간이동 방출
-    this.createPortalPair(world, width / 2, 580, width / 4, 820, '#0ea5e9');
-    
-    // 소용돌이 2의 흡입구 2개에 도달한 공들은 각각 마지막 결승 게이트 바로 위로 급강하 방출
-    this.createPortalPair(world, width / 2 - 120, 1050, 120, 1380, '#f43f5e');
-    this.createPortalPair(world, width / 2 + 120, 1050, width - 120, 1380, '#f43f5e');
-
-    // 2. 감속 늪지대와 부스터 배치
-    this.createSlowZone(world, width / 2, 380, 220, 50); // 소용돌이 1 진입 직전 감속
-    this.createBooster(world, width / 2, 480, 100, 30, 0, 0.002);
+    this.createSign(world, width / 2, 85, '🌌 4단 블랙홀 · 궤도를 타고 탈출!', '#c4b5fd', 20);
+    this.createSlowZone(world, width / 2, 390, 180, 48);
+    this.createBooster(world, width / 2, 470, 100, 30, 0, 0.002);
+    spinners.push(this.addSpinner(world, width / 2, height - 420, 300, 16, -0.038));
 
     return { spinners };
   },
@@ -789,33 +794,30 @@ window.MarbleMaps = {
   },
 
   // 소용돌이 조립
-  buildVortexFunnel: function(items, centerX, centerY, radius, clockwise) {
-    const segments = 18;
+  buildVortexFunnel: function(items, centerX, centerY, radius) {
+    const segments = 30;
     const thickness = 10;
-    const segmentLength = (2 * Math.PI * radius) / segments;
-    
-    const exitAngleStart = Math.PI * 0.45;
-    const exitAngleEnd = Math.PI * 0.75;
+    const segmentLength = 2 * radius * Math.sin(Math.PI / segments) + 2;
 
     for (let i = 0; i < segments; i++) {
-      const angle = (i / segments) * Math.PI * 2;
-      
-      // 출구 부분 제외 (소용돌이에 닿으면 센서 포탈로 타게 하거나 탈출)
-      if (angle > exitAngleStart && angle < exitAngleEnd) {
+      const angle = ((i + 0.5) / segments) * Math.PI * 2;
+      // 위쪽은 넓은 진입구, 아래쪽은 구슬 여러 개가 통과할 배수구로 연다.
+      if ((angle > Math.PI * 0.34 && angle < Math.PI * 0.66) ||
+          (angle > Math.PI * 1.12 && angle < Math.PI * 1.88)) {
         continue;
       }
 
-      const spiralRadius = radius * (1 - (angle / (Math.PI * 8)) * (clockwise ? 1 : -1));
-      const x = centerX + spiralRadius * Math.cos(angle);
-      const y = centerY + spiralRadius * Math.sin(angle);
-      const wallAngle = angle + Math.PI / 2 + (clockwise ? 0.1 : -0.1);
+      const x = centerX + radius * Math.cos(angle);
+      const y = centerY + radius * Math.sin(angle);
 
       items.push(Bodies.rectangle(x, y, segmentLength, thickness, {
         isStatic: true,
-        angle: wallAngle,
-        restitution: 0.5,
+        label: 'vortex_wall',
+        angle: angle + Math.PI / 2,
+        restitution: 0.35,
         friction: 0,
-        render: { fillStyle: '#171717', strokeStyle: '#3f3f46', lineWidth: 1 }
+        frictionStatic: 0,
+        render: { fillStyle: '#312e81', strokeStyle: '#818cf8', lineWidth: 2 }
       }));
     }
   }

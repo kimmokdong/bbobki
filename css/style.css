@@ -69,8 +69,8 @@ body {
 
 /* Left Sidebar (Settings) */
 #sidebar {
-  width: 340px;
-  min-width: 340px;
+  width: clamp(250px, 18vw, 320px);
+  flex-shrink: 0;
   height: 100%;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-color);
@@ -487,20 +487,31 @@ button:disabled {
 /* Central Canvas Area */
 #game-canvas-area {
   flex: 1;
+  min-width: 0;
   height: 100%;
   position: relative;
   background: radial-gradient(circle at center, #0b0e20 0%, #030409 100%);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, min(800px, calc((100dvh - 32px) * 8 / 9))) clamp(140px, 12vw, 210px);
   justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+#race-view {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
   overflow: hidden;
 }
 
 #canvas-container {
-  width: 800px;
-  height: 900px;
-  max-width: 95%;
-  max-height: 95vh;
+  width: min(100%, 800px, calc((100dvh - 32px) * 8 / 9));
+  flex-shrink: 0;
   aspect-ratio: 800 / 900;
   background: #090b14;
   border-radius: 16px;
@@ -516,6 +527,30 @@ button:disabled {
   display: block;
 }
 
+/* 전체 맵은 메인 화면의 확대·슬로모션과 별개로 모든 구슬을 계속 표시한다. */
+#map-overview {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 10px;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.72), rgba(9, 14, 27, 0.92));
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  border-radius: 16px;
+}
+.overview-heading, .overview-footer { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.overview-heading h2 { font-size: 15px; }
+.overview-live { color: #6ee7b7; font-size: 9px; letter-spacing: 1px; }
+.overview-live::before { content: '● '; }
+#overview-mode { color: #7dd3fc; font-size: 11px; }
+.overview-map-frame { flex: 1; min-height: 0; position: relative; }
+#overview-canvas { width: 100%; height: 100%; position: absolute; inset: 0; display: block; touch-action: none; cursor: grab; border-radius: 5px; }
+#overview-canvas:active { cursor: grabbing; }
+#overview-canvas:focus-visible { outline: 2px solid #fbbf24; outline-offset: 2px; }
+.overview-footer { font-size: 10px; color: #94a3b8; }
+#camera-follow { padding: 8px 2px; font-size: 12px; }
+#overview-help { text-align: center; color: #94a3b8; font-size: 10px; line-height: 1.7; }
+
 /* Camera Target Debug Badge */
 .camera-badge {
   position: absolute;
@@ -529,6 +564,8 @@ button:disabled {
   border-radius: 20px;
   font-size: 12px;
   font-weight: 600;
+  max-width: 95%;
+  white-space: nowrap;
   color: var(--text-primary);
   display: flex;
   align-items: center;
@@ -553,14 +590,14 @@ button:disabled {
 
 /* Right Sidebar (LIVE RANKING - 폭 460px로 더 확대하여 시인성 최적화) */
 #right-sidebar {
-  width: 460px;
-  min-width: 460px;
+  width: clamp(180px, 16vw, 280px);
+  flex-shrink: 0;
   height: 100%;
   background: var(--bg-right-sidebar);
   border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: 18px;
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.3);
   z-index: 8;
   overflow-x: hidden; /* 좌우 잘림 방지 */
@@ -886,7 +923,7 @@ button:disabled {
 }
 
 .highlight-name {
-  font-size: 120px;
+  font-size: clamp(32px, 5vw, 100px);
   font-weight: 900;
   line-height: 1.1;
   text-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -898,4 +935,31 @@ button:disabled {
 .leaderboard-item.finished {
   background: rgba(16, 185, 129, 0.15); /* 에메랄드 그린 배경 */
   border-left: 4px solid #10b981;
+}
+
+@media (max-width: 1150px) {
+  #sidebar { width: 240px; }
+  #right-sidebar { width: 170px; padding: 12px; }
+  #game-canvas-area { gap: 10px; padding: 10px; grid-template-columns: minmax(0, 1fr) 130px; }
+  #map-overview { padding: 12px 7px; }
+  .rank-name-text, .rank-number-text { font-size: 21px; }
+  .leaderboard-item.finished .rank-name-text, .leaderboard-item.finished .rank-number-text { font-size: 23px; }
+  .camera-badge { font-size: 10px; padding: 6px 8px; flex-wrap: wrap; justify-content: center; }
+}
+
+@media (max-width: 850px) {
+  body { overflow: auto; height: auto; }
+  #app-container { height: auto; min-height: 100dvh; flex-wrap: wrap; overflow: visible; }
+  #game-canvas-area { order: -1; flex: 0 0 100%; height: 75dvh; min-height: 460px; grid-template-columns: minmax(0, 1fr) 116px; gap: 8px; padding: 8px; }
+  #canvas-container { width: min(100%, calc((75dvh - 16px) * 8 / 9)); }
+  #sidebar { flex: 1 1 58%; width: 58%; height: 650px; }
+  #right-sidebar { flex: 1 1 42%; width: 42%; height: 650px; }
+  #map-overview { gap: 8px; padding: 10px 6px; }
+  .overview-heading h2 { font-size: 13px; }
+  .overview-footer { flex-wrap: wrap; font-size: 9px; }
+  #overview-mode, #overview-help { font-size: 9px; }
+  #camera-target-rank { display: none; }
+  .highlight-rank { font-size: 26px; }
+  .sidebar-scroll, .sidebar-footer, #sidebar header { padding: 10px; }
+  .panel-card { padding: 10px; }
 }
