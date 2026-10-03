@@ -335,8 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const highlightOverlay = document.getElementById('highlight-overlay');
     if (highlightOverlay) highlightOverlay.classList.add('hidden');
 
-    // 맵 상태 및 구슬 리셋 (완전 처음 시작 전 상태로 구슬 재배치)
-    syncMarblesToPhysics();
+    // reset()이 섞어 놓은 출발 배치를 유지한다. 여기서 구슬을 다시 만들지 않는다.
 
     btnStart.disabled = false;
     btnPause.disabled = true;

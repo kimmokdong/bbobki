@@ -202,6 +202,23 @@ window.MarbleMaps = {
     return zone;
   },
 
+  // 벽을 따라 내려가는 직통 경로를 없앤다. 막힌 벽을 추가하지 않고 중앙 장애물로 합류시킨다.
+  createEdgeGuides: function(world, width, height, mapType) {
+    const guideWidth = { pinball: 150, spinner: 180, zigzag: 110, vortex: 190, 'fate-doors': 160, 'snakes-ladders': 150 }[mapType] || 150;
+    const strength = mapType === 'spinner' ? 0.002 : 0.0018;
+    const topY = 130;
+    const bottomY = height - 350; // 결승 튜브와 골인 이후 구간에는 힘을 가하지 않는다.
+    const color = (this.themes[mapType] || this.themes.pinball).color;
+    return [1, -1].map(direction => {
+      const x = direction === 1 ? guideWidth / 2 : width - guideWidth / 2;
+      const guide = this.createWindZone(world, x, (topY + bottomY) / 2, guideWidth, bottomY - topY, strength);
+      guide.edgeGuide = true;
+      guide.fieldDirection = direction;
+      guide.guideColor = color;
+      return guide;
+    });
+  },
+
   createGravityWell: function(world, x, y, radius, direction = 1) {
     const well = Bodies.circle(x, y, radius, { isStatic: true, isSensor: true, label: 'gravity_well', render: { fillStyle: 'transparent' } });
     well.fieldDirection = direction;

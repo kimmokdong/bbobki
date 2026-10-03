@@ -207,6 +207,8 @@ window.MarbleGame = {
       this.spinners = mapData.spinners;
     }
 
+    // 늘어난 실제 맵 길이를 기준으로 양쪽 벽의 우회 경로를 보완한다.
+    window.MarbleMaps.createEdgeGuides(this.world, this.width, this.height, mapType);
     this.punches = common.punches || [];
     const bodies = Composite.allBodies(this.world);
     this.movingObstacles = bodies.filter(body => body.motion);
@@ -222,6 +224,34 @@ window.MarbleGame = {
     document.getElementById('race-view').style.setProperty('--map-accent', this.mapTheme.color);
   },
 
+  // 겹치지 않는 출발 칸을 섞고 전체 배치도 이동한다. 참가자 목록 순서는 유지한다.
+  createStartingPositions: function(count) {
+    const columns = Math.min(count, 18);
+    const order = Array.from({ length: count }, (_, index) => index);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    // 우연히 같은 순서가 다시 나와도 재설정 시 배치가 달라지도록 한다.
+    if (count > 1 && order.every((slot, index) => slot === this.startingOrder?.[index])) {
+      order.push(...order.splice(0, 1 + Math.floor(Math.random() * (count - 1))));
+    }
+    let offset = (Math.random() - 0.5) * 48;
+    if (Math.abs(offset - this.startingOffset) < 8) {
+      offset = (this.startingOffset >= 0 ? -1 : 1) * (20 + Math.random() * 4);
+    }
+    this.startingOrder = order;
+    this.startingOffset = offset;
+    return order.map(slot => {
+      const row = Math.floor(slot / columns);
+      const rowCount = Math.min(columns, count - row * columns);
+      return {
+        x: this.width / 2 + (slot % columns - (rowCount - 1) / 2) * 38 + offset,
+        y: 40 + row * 38 + (Math.random() - 0.5) * 2
+      };
+    });
+  },
+
   // 구슬들 세팅 및 스폰
   setupMarbles: function(marbleConfigs) {
     this.marbles.forEach(m => World.remove(this.world, m.body));
@@ -230,13 +260,10 @@ window.MarbleGame = {
     this.viewportY = 0;
     this.resumeCameraTracking();
 
-    const spacing = Math.min(600 / (marbleConfigs.length + 1), 40);
-    const startY = 40;
+    const positions = this.createStartingPositions(marbleConfigs.length);
 
     marbleConfigs.forEach((config, idx) => {
-      const offsetX = (idx % 2 === 0 ? 1 : -1) * (Math.floor(idx / 2) * spacing);
-      const x = this.width / 2 + offsetX + (Math.random() - 0.5) * 5;
-      const y = startY + Math.floor(idx / 8) * 30 + (Math.random() - 0.5) * 5;
+      const { x, y } = positions[idx];
 
       const radius = 16; // 구슬 크기 키움 (기존 12)
       const body = Bodies.circle(x, y, radius, {
@@ -407,21 +434,10 @@ window.MarbleGame = {
     // 맵 재생성 (핀볼 숲 등의 장애물 랜덤성 다시 부여)
     this.loadMap(this.currentMapType);
 
-    const spacing = Math.min(600 / (this.marbles.length + 1), 40);
-    const startY = 40;
-
-    // 위치 무작위 셔플을 위한 인덱스 배열 섞기
-    const shuffledIndices = Array.from(this.marbles.keys());
-    for (let i = shuffledIndices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledIndices[i], shuffledIndices[j]] = [shuffledIndices[j], shuffledIndices[i]];
-    }
+    const positions = this.createStartingPositions(this.marbles.length);
 
     this.marbles.forEach((marble, idx) => {
-      const targetIdx = shuffledIndices[idx];
-      const offsetX = (targetIdx % 2 === 0 ? 1 : -1) * (Math.floor(targetIdx / 2) * spacing);
-      const x = this.width / 2 + offsetX + (Math.random() - 0.5) * 5;
-      const y = startY + Math.floor(targetIdx / 8) * 30 + (Math.random() - 0.5) * 5;
+      const { x, y } = positions[idx];
 
       marble.isFinished = false;
       marble.finishTime = null;
@@ -545,7 +561,7 @@ window.MarbleGame = {
       }
     });
     (this.forceFields || []).forEach(field => {
-      if (field.label === 'wind_zone') field.fieldFlow = Math.sin(elapsed * Math.PI * 2 / field.fieldPeriod + field.fieldPhase);
+      if (field.label === 'wind_zone') field.fieldFlow = field.edgeGuide ? field.fieldDirection : Math.sin(elapsed * Math.PI * 2 / field.fieldPeriod + field.fieldPhase);
     });
   },
 
@@ -594,7 +610,7 @@ window.MarbleGame = {
       }
       for (const field of this.forceFields) {
         if (field.label === 'wind_zone') {
-          if (this.isPointInRectangle(pos, field)) Body.applyForce(body, pos, { x: field.fieldStrength * field.fieldFlow * body.mass, y: 0.0001 * body.mass });
+          if (this.isPointInRectangle(pos, field)) Body.applyForce(body, pos, { x: field.fieldStrength * field.fieldFlow * body.mass, y: (field.edgeGuide ? 0 : 0.0001) * body.mass });
         } else {
           const dx = pos.x - field.position.x;
           const dy = pos.y - field.position.y;
@@ -939,6 +955,36 @@ window.MarbleGame = {
     // 1. 기믹 영역들
     bodies.forEach(body => {
       if (body.label === 'portal_out' && body.render.visible === false) return;
+      if (body.edgeGuide) {
+        const { min, max } = body.bounds;
+        const inward = body.fieldDirection;
+        const wallX = inward === 1 ? min.x : max.x;
+        ctx.save();
+        const gradient = ctx.createLinearGradient(wallX, 0, inward === 1 ? max.x : min.x, 0);
+        gradient.addColorStop(0, body.guideColor + '30');
+        gradient.addColorStop(1, body.guideColor + '00');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(min.x, min.y, max.x - min.x, max.y - min.y);
+        ctx.strokeStyle = body.guideColor;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath(); ctx.moveTo(wallX + inward * 7, min.y); ctx.lineTo(wallX + inward * 7, max.y); ctx.stroke();
+        const phase = (this.engine.timing.timestamp - this.mapStartedAt) * 0.025 % 22;
+        for (let y = min.y + 65; y < max.y - 20; y += 170) {
+          ctx.beginPath();
+          [24, 46, 68].forEach(distance => {
+            const x = wallX + inward * (distance + phase);
+            ctx.moveTo(x, y - 9); ctx.lineTo(x + inward * 9, y); ctx.lineTo(x, y + 9);
+          });
+          ctx.stroke();
+          ctx.fillStyle = body.guideColor;
+          ctx.font = '700 14px Noto Sans KR';
+          ctx.textAlign = 'center';
+          ctx.fillText('중앙 합류', wallX + inward * 60, y + 33);
+        }
+        ctx.restore();
+        return;
+      }
       if (body.label === 'wind_zone' || body.label === 'launch_pad') {
         ctx.save();
         ctx.beginPath();

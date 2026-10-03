@@ -82,6 +82,15 @@ window.MarbleOverview = {
     bodies.forEach(body => {
       if (body.label === 'marble' || body.label === 'map_sign' || body.label === 'finish_sensor') return;
       if (body.label === 'portal_out' && body.render.visible === false) return;
+      if (body.edgeGuide) {
+        // 합류 장치가 실제 장애물을 가리지 않도록 벽의 얇은 띠로만 표시한다.
+        ctx.fillStyle = body.guideColor;
+        ctx.globalAlpha = 0.45;
+        const wallX = body.fieldDirection === 1 ? 0 : game.width - 10;
+        ctx.fillRect(wallX, body.bounds.min.y, 10, body.bounds.max.y - body.bounds.min.y);
+        ctx.globalAlpha = 1;
+        return;
+      }
       const portal = body.label === 'portal_in' || body.label === 'portal_out';
       ctx.globalAlpha = body.portalActive === false ? 0.25 : 1;
       ctx.fillStyle = body.label === 'booster' ? '#0e7490' : body.label === 'slow_zone' ? '#854d0e' :
