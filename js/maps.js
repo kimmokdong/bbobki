@@ -6,6 +6,14 @@
 const { Bodies, Body, Composite } = Matter;
 
 window.MarbleMaps = {
+  themes: {
+    pinball: { color: '#34d399', background: '#122b28', description: '움직이는 범퍼와 돌풍이 구슬을 흩어 놓는 네온 숲.', finaleTitle: '잭팟 플리퍼', finaleHint: '쌍둥이 플리퍼와 마지막 잭팟 핀을 통과하라!', finaleOffset: 700 },
+    spinner: { color: '#fb7185', background: '#291d30', description: '역회전 기어와 이동 장벽 사이에서 박자를 타는 기계 계곡.', finaleTitle: '박자 게이트', finaleHint: '기어를 지나 열린 틈으로! 셔터는 다시 닫힌다.', finaleOffset: 850 },
+    zigzag: { color: '#7dd3fc', background: '#142a38', description: '점프홀·맞바람·스프링을 타고 추월하는 급경사 슬라이드.', finaleTitle: '라스트 점프', finaleHint: '움직이는 착지대와 한 번만 튀는 마지막 스프링!', finaleOffset: 650 },
+    vortex: { color: '#c084fc', background: '#201b36', description: '회전하는 중력장과 웜홀을 오가는 우주 궤도 레이스.', finaleTitle: '웜홀 룰렛', finaleHint: '파랑은 급행, 빨강은 후퇴. 웜홀의 운명이 바뀐다!', finaleOffset: 600 },
+    'fate-doors': { color: '#fbbf24', background: '#302438', description: '세 문을 지날 때마다 급행·우회·후퇴 경로가 달라지는 운명의 성.', finaleTitle: '마지막 세 문', finaleHint: '금빛 급행 · 푸른 우회 · 붉은 후퇴, 다음 변화 전 통과!', finaleOffset: 700 },
+    'snakes-ladders': { color: '#86efac', background: '#1b3024', description: '흔들리는 다리와 사다리, 움직이는 뱀을 피해 달리는 정글.', finaleTitle: '코브라의 선택', finaleHint: '움직이는 코브라를 피해 양옆 구출 사다리를 노려라!', finaleOffset: 650 }
+  },
   // 공통 맵 바운더리 (외부 벽 및 하단 결승선 깔때기)
   // width: 800, height: 1800
   createCommonBoundaries: function(world, width, height) {
@@ -79,59 +87,12 @@ window.MarbleMaps = {
     });
     boundaries.push(finishSensor);
 
-    // 6. 가로로 튕기며 움직이는 펀치 막대 2개 배치 (관 안쪽)
-    const punches = [];
-    
-    const createSawtoothPunch = (x, y, w, h, opts) => {
-      const parts = [];
-      const numTeeth = 5;
-      const tw = w / numTeeth;
-      parts.push(Bodies.rectangle(x, y + h/4, w, h/2, { render: opts.render }));
-      for (let i = 0; i < numTeeth; i++) {
-        const tx = x - w/2 + tw/2 + i*tw;
-        parts.push(Bodies.polygon(tx, y - h/4, 3, tw*0.6, { angle: Math.PI/2, render: opts.render }));
-      }
-      return Body.create({
-        parts: parts,
-        isStatic: true,
-        label: opts.label,
-        restitution: opts.restitution,
-        friction: opts.friction,
-        render: opts.render
-      });
-    };
-
-    // 상단 펀치 (좌->우 시작)
-    const punchLeft = createSawtoothPunch(gateX - 25, funnelY + 140, 52, 14, {
-      label: 'punch',
-      restitution: 1.6,
-      friction: 0,
-      render: { fillStyle: '#ef4444', strokeStyle: '#fca5a5', lineWidth: 2 }
-    });
-    punchLeft.startX = gateX - 25;
-    punchLeft.direction = 1; // 이동 방향
-    punchLeft.offsetSpeed = 0.005; // 펀치 속도
-    punches.push(punchLeft);
-
-    // 하단 펀치 (우->좌 시작)
-    const punchRight = createSawtoothPunch(gateX + 25, funnelY + 190, 52, 14, {
-      label: 'punch',
-      restitution: 1.6,
-      friction: 0,
-      render: { fillStyle: '#3b82f6', strokeStyle: '#93c5fd', lineWidth: 2 }
-    });
-    punchRight.startX = gateX + 25;
-    punchRight.direction = -1;
-    punchRight.offsetSpeed = 0.006;
-    punches.push(punchRight);
-
-    Composite.add(world, punches);
     Composite.add(world, boundaries);
     
     return {
       finishSensor: finishSensor,
       funnelY: funnelY,
-      punches: punches  // game.js에서 위치를 업데이트하도록 전달
+      punches: [] // 결승 장치는 각 맵이 직접 구성한다.
     };
   },
 
@@ -218,12 +179,73 @@ window.MarbleMaps = {
     return sign;
   },
 
+  // 이동·진자·개폐 장애물은 같은 엔진 시간으로 움직이고 재설정 때 기준 위치로 돌아간다.
+  createMovingObstacle: function(world, x, y, length, thickness, motion, color) {
+    const options = {
+      isStatic: true, label: 'moving_obstacle', restitution: 0.65, friction: 0, frictionStatic: 0,
+      angle: motion.angle || 0,
+      render: { fillStyle: color, strokeStyle: '#e2e8f0', lineWidth: 2 }
+    };
+    const body = motion.radius ? Bodies.circle(x, y, motion.radius, options) : Bodies.rectangle(x, y, length, thickness, options);
+    body.motion = { x, y, angle: options.angle, rangeX: 0, rangeY: 0, swing: 0, period: 3000, phase: Math.random() * Math.PI * 2, ...motion };
+    body.bumperPower = motion.bumperPower;
+    Composite.add(world, body);
+    return body;
+  },
+
+  createWindZone: function(world, x, y, width, height, strength, period = 3000) {
+    const zone = Bodies.rectangle(x, y, width, height, { isStatic: true, isSensor: true, label: 'wind_zone', render: { fillStyle: 'transparent' } });
+    zone.fieldStrength = strength;
+    zone.fieldPeriod = period;
+    zone.fieldPhase = Math.random() * Math.PI * 2;
+    Composite.add(world, zone);
+    return zone;
+  },
+
+  createGravityWell: function(world, x, y, radius, direction = 1) {
+    const well = Bodies.circle(x, y, radius, { isStatic: true, isSensor: true, label: 'gravity_well', render: { fillStyle: 'transparent' } });
+    well.fieldDirection = direction;
+    well.fieldPhase = Math.random() * Math.PI * 2;
+    Composite.add(world, well);
+    return well;
+  },
+
+  createLaunchPad: function(world, x, y, width, angle, vx, vy) {
+    const pad = Bodies.rectangle(x, y, width, 38, { isStatic: true, isSensor: true, angle, label: 'launch_pad', render: { fillStyle: 'transparent' } });
+    pad.launchVelocity = { x: vx, y: vy };
+    Composite.add(world, pad);
+    return pad;
+  },
+
+  createCrossRotor: function(world, x, y, length, speed, color) {
+    const rotor = Body.create({
+      parts: [Bodies.rectangle(x, y, length, 18), Bodies.rectangle(x, y, length, 18, { angle: Math.PI / 2 })],
+      isStatic: true, label: 'spinner', restitution: 0.7, friction: 0,
+      render: { fillStyle: color, strokeStyle: '#e2e8f0', lineWidth: 2 }
+    });
+    rotor.rotationSpeed = speed;
+    rotor.reversePeriod = 4600;
+    Composite.add(world, rotor);
+    return rotor;
+  },
+
+  createChangingPortal: function(world, x, y, destinations, period, phase = 0) {
+    const pair = this.createPortalPair(world, x, y, destinations[0].x, destinations[0].y, destinations[0].color, 30);
+    pair.portalIn.destinations = destinations;
+    pair.portalIn.changePeriod = period;
+    pair.portalIn.choicePhase = phase;
+    pair.portalIn.singleUse = true;
+    pair.portalIn.portalIcon = '?';
+    pair.portalOut.render.visible = false;
+    return pair.portalIn;
+  },
+
   // ----------------------------------------------------
   // 맵 1: 핀볼 숲 (Pinball Forest)
   // ----------------------------------------------------
   createPinballMap: function(world, width, height) {
     const startY = 150;
-    const endY = height - 430; // 깔때기와 핀이 겹치지 않도록 결승 진입 공간 확보
+    const endY = height - 950; // 마지막 플리퍼 무대는 격자와 분리한다.
     const items = [];
     const spinners = [];
 
@@ -242,6 +264,7 @@ window.MarbleMaps = {
       for (let x = startX; x < width - 35; x += colSpacing) {
         // 늪 안에서 핀 위에 멈춰 서는 조합 자체를 만들지 않는다.
         if (slowZones.some(([sx, sy]) => Math.abs(x - sx) < 115 && Math.abs(y - sy) < 65)) continue;
+        if ([height * 0.32, height * 0.52].some(clearingY => Math.abs(y - clearingY) < 90)) continue;
 
         const isBumper = Math.random() < 0.14 && y > 300 && y < endY - 120;
         
@@ -277,7 +300,32 @@ window.MarbleMaps = {
     this.createBooster(world, width / 3, height * 0.65, 120, 30, 0.2, 0.003);
     this.createBooster(world, 2 * width / 3, height * 0.82, 120, 30, -0.2, 0.003);
 
-    return { spinners };
+    [0.32, 0.52].forEach((ratio, index) => {
+      const y = height * ratio;
+      this.createWindZone(world, width / 2, y, 660, 115, 0.0011, 2800 + index * 650);
+      this.createMovingObstacle(world, width / 2, y, 0, 0,
+        { radius: 23, rangeX: 235, period: 3500 + index * 500, bumperPower: 10 }, '#34d399');
+    });
+    this.createSign(world, width / 2, 105, '🌿 핀볼 숲 · 돌풍과 이동 범퍼', '#6ee7b7', 21);
+
+    const funnelY = height - 190;
+    this.createSign(world, width / 2, funnelY - 690, '🎰 잭팟 플리퍼 · 끝까지 반사!', '#fbbf24', 22);
+    [235, 400, 565].forEach((x, index) => {
+      const bumper = Bodies.circle(x, funnelY - 535 + (index === 1 ? 60 : 0), 27, {
+        isStatic: true, label: 'bumper', restitution: 1.05, friction: 0,
+        render: { fillStyle: '#f59e0b', strokeStyle: '#fde68a', lineWidth: 3 }
+      });
+      bumper.bumperPower = 12;
+      Composite.add(world, bumper);
+    });
+    this.createMovingObstacle(world, 235, funnelY - 275, 280, 20,
+      { angle: 0.22, swing: 0.62, period: 2400 }, '#10b981');
+    this.createMovingObstacle(world, 565, funnelY - 275, 280, 20,
+      { angle: -0.22, swing: -0.62, period: 2750 }, '#f59e0b');
+    const jackpot = this.createMovingObstacle(world, width / 2, funnelY + 180, 0, 0,
+      { radius: 12, rangeX: 68, period: 2700 }, '#fbbf24');
+
+    return { spinners, finaleDevice: jackpot };
   },
 
   // ----------------------------------------------------
@@ -295,31 +343,25 @@ window.MarbleMaps = {
       { fill: '#f59e0b', stroke: '#fbbf24' }  // 노랑
     ];
 
-    // Y축 150부터 끝단(height - 220)까지 약 105px 간격으로 촘촘히 층 형성
-    for (let y = 150; y <= height - 220; y += 105) {
-      // 맵 정중앙 부근(height / 2)에는 엄청나게 큰 '보스 스피너' 하나만 배치하고 건너뜀
-      if (Math.abs(y - (height / 2)) < 60) {
-        const giantSpinner = this.addSpinner(world, width / 2, y, width - 180, 40, 0.035);
-        giantSpinner.render.fillStyle = '#f43f5e';
-        giantSpinner.render.strokeStyle = '#fda4af';
-        spinners.push(giantSpinner);
-        continue;
-      }
+    // 회전 팔의 반경만큼 여유를 두어 연속 회전벽 사이에 갇히지 않게 한다.
+    const gearYs = [height * 0.3, height * 0.65];
+    for (let y = 150; y <= height - 1100; y += 180) {
+      if (gearYs.some(gearY => Math.abs(y - gearY) < 250) || Math.abs(y - height / 2) < 350) continue;
 
-      // 일반 층마다 2~4개의 스피너 생성
-      const numSpinners = Math.floor(Math.random() * 3) + 2;
+      // 일반 층마다 2~3개의 스피너 생성
+      const numSpinners = Math.floor(Math.random() * 2) + 2;
       const spacing = width / numSpinners;
       
       for (let i = 0; i < numSpinners; i++) {
-        // x 좌표 무작위 변주를 크게 주어 벽 바깥쪽으로 중심축이 나갈 수도 있게 허용
-        const cx = (spacing / 2) + i * spacing + (Math.random() - 0.5) * 160;
+        // 중심축은 벽 안쪽에 두고 좌우 배치를 조금씩 바꾼다.
+        const cx = (spacing / 2) + i * spacing + (Math.random() - 0.5) * 70;
         
-        // 다양한 길이(100 ~ 280)로 사이드 공간까지 확실히 쓸어내게 함
-        const length = 100 + Math.random() * 180;
+        // 팔 길이 115~210px: 옆 회전 팔과 구슬이 통과할 간격을 남긴다.
+        const length = 115 + Math.random() * 95;
         const thickness = 10 + Math.random() * 8;
         
-        // 다양한 회전 속도 (0.015 ~ 0.08)
-        let speed = 0.015 + Math.random() * 0.065;
+        // 다양한 회전 속도 (0.018 ~ 0.047)
+        let speed = 0.018 + Math.random() * 0.029;
         
         // 벽쪽 스피너는 밖으로 떨어지는 구슬을 안으로 '퍼올리도록' 회전 방향 고정
         if (cx < width / 3) {
@@ -344,7 +386,25 @@ window.MarbleMaps = {
       }
     }
 
-    return { spinners };
+    spinners.push(this.createCrossRotor(world, width / 2, height / 2, 470, 0.024, '#f59e0b'));
+    gearYs.forEach((y, index) => {
+      spinners.push(this.createCrossRotor(world, 235, y, 230, 0.033, '#8b5cf6'));
+      spinners.push(this.createCrossRotor(world, 565, y, 230, -0.031, '#f43f5e'));
+      this.createWindZone(world, width / 2, y + 160, 600, 70, 0.001, 3200 + index * 500);
+    });
+    this.createSign(world, width / 2, 85, '⚙️ 스피너 밸리 · 역회전 기어', '#fda4af', 21);
+    const funnelY = height - 190;
+    this.createSign(world, width / 2, funnelY - 830, '⏱️ 박자 게이트 · 열린 순간을 노려라!', '#fb7185', 22);
+    spinners.push(this.createCrossRotor(world, 245, funnelY - 650, 245, 0.028, '#ec4899'));
+    spinners.push(this.createCrossRotor(world, 555, funnelY - 650, 245, -0.028, '#8b5cf6'));
+    const phase = Math.random() * Math.PI * 2;
+    this.createMovingObstacle(world, 195, funnelY - 330, 390, 18,
+      { angle: 0.22, rangeX: -100, pulse: true, period: 3400, phase }, '#f43f5e');
+    this.createMovingObstacle(world, 605, funnelY - 330, 390, 18,
+      { angle: -0.22, rangeX: 100, pulse: true, period: 3400, phase }, '#8b5cf6');
+    const shutter = this.createMovingObstacle(world, width / 2, funnelY + 185, 50, 12,
+      { rangeX: 88, period: 3100 }, '#fb7185');
+    return { spinners, finaleDevice: shutter };
   },
 
   // 스피너 바디 생성
@@ -438,6 +498,8 @@ window.MarbleMaps = {
           render: { fillStyle: '#f59e0b', strokeStyle: '#fde68a', lineWidth: 3 }
         }));
         this.createSign(world, slide.x, slide.y - 62, '⚡ 점프 or 지름길', '#fbbf24', 16);
+        const spring = pointOnSlide(slide, -direction * (gap / 2 + 55), 27);
+        this.createLaunchPad(world, spring.x, spring.y, 76, slide.angle, direction * 11, -6);
       } else {
         addRail(slide, 0, slide.w, index);
         addSlideCurrent(slide, 0, slide.w - 70);
@@ -479,24 +541,30 @@ window.MarbleMaps = {
         spinner.render.strokeStyle = '#fed7aa';
         spinners.push(spinner);
       }
+      if (index === 3 || index === 7) {
+        this.createWindZone(world, width / 2, slide.y + 145, 630, 66, 0.0012, 3000);
+      }
     });
 
     Composite.add(world, items);
 
     this.createSign(world, width / 2, 105, '급경사 10단 · 점프홀에서 순위가 뒤집힌다!', '#7dd3fc', 20);
 
-    // 결승 직전 두 회전 막대가 좌우로 벌어진 구슬을 다시 섞는다.
-    const finalMixers = [
-      this.addSpinner(world, width / 2, height - 390, 360, 18, 0.034),
-      this.addSpinner(world, width / 2, height - 290, 220, 16, -0.049)
-    ];
-    finalMixers[0].render.fillStyle = '#0ea5e9';
-    finalMixers[0].render.strokeStyle = '#bae6fd';
-    finalMixers[1].render.fillStyle = '#a855f7';
-    finalMixers[1].render.strokeStyle = '#e9d5ff';
-    spinners.push(...finalMixers);
-
-    return { spinners };
+    const funnelY = height - 190;
+    this.createSign(world, width / 2, funnelY - 230, '🏄 라스트 점프 · 착지대가 움직인다!', '#7dd3fc', 20);
+    [-1, 1].forEach(side => {
+      const x = width / 2 + side * 200;
+      const angle = -side * 0.3;
+      Composite.add(world, Bodies.rectangle(x, funnelY - 155, 245, 14, {
+        isStatic: true, angle, friction: 0, restitution: 0.25,
+        render: { fillStyle: '#0369a1', strokeStyle: '#7dd3fc', lineWidth: 2 }
+      }));
+      this.createLaunchPad(world, x - side * 80, funnelY - 158, 78, angle, -side * 9, -6);
+    });
+    const landing = this.createMovingObstacle(world, width / 2, funnelY - 55, 165, 16,
+      { rangeX: 170, period: 3300, swing: 0.1 }, '#0ea5e9');
+    this.createLaunchPad(world, width / 2, funnelY + 155, 46, 0, 0, -7);
+    return { spinners, finaleDevice: landing };
   },
 
   // ----------------------------------------------------
@@ -525,6 +593,7 @@ window.MarbleMaps = {
     stages.forEach((stage, index) => {
       stage.xs.forEach((x, lane) => {
         this.buildVortexFunnel(items, x, stage.y, stage.radius);
+        this.createGravityWell(world, x, stage.y + 20, stage.radius * 0.67, (index + lane) % 2 ? -1 : 1);
         const spinner = this.addSpinner(world, x, stage.y, stage.radius * 1.05, 12,
           (index + lane) % 2 ? -0.026 : 0.026);
         spinner.render.fillStyle = '#6d28d9';
@@ -544,9 +613,21 @@ window.MarbleMaps = {
     this.createSign(world, width / 2, 85, '🌌 4단 블랙홀 · 궤도를 타고 탈출!', '#c4b5fd', 20);
     this.createSlowZone(world, width / 2, 390, 180, 48);
     this.createBooster(world, width / 2, 470, 100, 30, 0, 0.002);
-    spinners.push(this.addSpinner(world, width / 2, height - 420, 300, 16, -0.038));
-
-    return { spinners };
+    const funnelY = height - 190;
+    this.createSign(world, width / 2, funnelY - 580, '🌀 웜홀 룰렛 · 파랑 급행 / 빨강 후퇴', '#c4b5fd', 20);
+    this.createGravityWell(world, width / 2, funnelY - 285, 185, -1);
+    [0, Math.PI].forEach(phase => {
+      this.createMovingObstacle(world, width / 2, funnelY - 285, 0, 0,
+        { radius: 19, rangeX: 145, rangeY: 65, phaseY: Math.PI / 2, phase, period: 3400, bumperPower: 7 }, '#a78bfa');
+    });
+    const destinations = [
+      { x: width / 2, y: funnelY + 150, color: '#38bdf8', caption: '급행 ↓' },
+      { x: width / 2, y: funnelY - 520, color: '#fb7185', caption: '후퇴 ↩' }
+    ];
+    const leftWormhole = this.createChangingPortal(world, 285, funnelY - 135, destinations.map(dest => ({ ...dest })), 2900);
+    leftWormhole.statusName = '왼쪽 웜홀';
+    this.createChangingPortal(world, 515, funnelY - 135, destinations.map(dest => ({ ...dest })), 2900, 1);
+    return { spinners, finaleDevice: leftWormhole };
   },
 
   // ----------------------------------------------------
@@ -641,25 +722,21 @@ window.MarbleMaps = {
     this.createBooster(world, 160, funnelY - 430, 120, 28, 0.28, 0.0035);
     this.createBooster(world, 640, funnelY - 430, 120, 28, -0.28, 0.0035);
 
-    // 전용 피니시: 크기가 다른 세 회전문을 통과해야 결승 깔때기에 진입한다.
-    this.createSign(world, width / 2, funnelY - 390, '🔐 삼중 회전 자물쇠', '#fbbf24', 22);
-    const finalLocks = [
-      this.addSpinner(world, width / 2, funnelY - 300, 520, 20, 0.018),
-      this.addSpinner(world, width / 2, funnelY - 190, 360, 20, -0.029),
-      this.addSpinner(world, width / 2, funnelY - 85, 260, 18, 0.042)
+    this.createSign(world, width / 2, funnelY - 395, '🔮 마지막 세 문 · 운명이 다시 바뀐다!', '#fbbf24', 21);
+    const destinations = [
+      { x: width / 2, y: funnelY + 160, color: '#fbbf24', caption: '급행 ↓' },
+      { x: 620, y: funnelY - 60, color: '#38bdf8', caption: '우회 →' },
+      { x: 400, y: funnelY - 620, color: '#fb7185', caption: '후퇴 ↩' }
     ];
-    const lockColors = [
-      ['#f59e0b', '#fde68a'],
-      ['#ec4899', '#f9a8d4'],
-      ['#8b5cf6', '#c4b5fd']
-    ];
-    finalLocks.forEach((lock, index) => {
-      lock.render.fillStyle = lockColors[index][0];
-      lock.render.strokeStyle = lockColors[index][1];
+    const shift = Math.floor(Math.random() * 3);
+    const finalDoors = laneXs.map((x, index) => {
+      this.createMovingObstacle(world, x, funnelY - 265, 170, 16,
+        { swing: 0.7, period: 2700 + index * 250 }, '#7c3aed');
+      return this.createChangingPortal(world, x, funnelY - 165,
+        destinations.map(dest => ({ ...dest })), 3200, (index + shift) % 3);
     });
-    spinners.push(...finalLocks);
-
-    return { spinners };
+    finalDoors[1].statusName = '가운데 문';
+    return { spinners, finaleDevice: finalDoors[1] };
   },
 
   // ----------------------------------------------------
@@ -727,8 +804,13 @@ window.MarbleMaps = {
       friction: 0,
       render: { fillStyle: '#1e3a5f', strokeStyle: '#60a5fa', lineWidth: 2 }
     };
-    rails.forEach(rail => {
-      items.push(Bodies.rectangle(rail.x, rail.y, 330, 14, { ...railOptions, angle: rail.angle }));
+    rails.forEach((rail, index) => {
+      if (index >= 4) {
+        this.createMovingObstacle(world, rail.x, rail.y, 330, 14,
+          { angle: rail.angle, swing: 0.2, period: 3400 + index * 220 }, '#16a34a');
+      } else {
+        items.push(Bodies.rectangle(rail.x, rail.y, 330, 14, { ...railOptions, angle: rail.angle }));
+      }
     });
     Composite.add(world, items);
 
@@ -745,6 +827,7 @@ window.MarbleMaps = {
     });
     spinners.push(...fieldSpinners);
 
+    let cobra;
     portals.forEach(portal => {
       const pair = this.createPortalPair(
         world,
@@ -758,6 +841,14 @@ window.MarbleMaps = {
       pair.portalIn.portalIcon = portal.icon;
       pair.portalIn.portalKind = portal.kind;
       pair.portalIn.singleUse = true;
+      if (portal.kind === 'final') {
+        cobra = pair.portalIn;
+        cobra.motion = { x: portal.x, y: portal.y, angle: 0, rangeX: 165, rangeY: 0, swing: 0, period: 4200, phase: Math.random() * Math.PI * 2 };
+        cobra.pulsePeriod = 3600;
+        cobra.openDuration = 1900;
+        cobra.pulsePhase = Math.random() * 3600;
+        cobra.portalCaption = '코브라 ↩';
+      }
       this.createSign(world, portal.x, portal.y - 48, portal.text, portal.color, 16);
     });
 
@@ -770,6 +861,8 @@ window.MarbleMaps = {
     this.createSlowZone(world, 620, 1395, 170, 62);
     this.createSlowZone(world, 380, 2015, 180, 62);
     this.createSlowZone(world, 620, 2645, 170, 62);
+    this.createWindZone(world, width / 2, 1640, 620, 65, 0.0009, 3300);
+    this.createLaunchPad(world, 130, 2420, 95, 0, 5, 8);
 
     // 전용 피니시: 중앙 코브라를 밟으면 한 번만 크게 후퇴한다.
     this.createSign(world, width / 2, funnelY - 200, '🐍 최후의 코브라 · 중앙을 피하라!', '#fb7185', 21);
@@ -789,8 +882,18 @@ window.MarbleMaps = {
         render: { fillStyle: '#ef4444', strokeStyle: '#fecaca', lineWidth: 4 }
       })
     ]);
-
-    return { spinners };
+    this.createMovingObstacle(world, width / 2, funnelY - 340, 460, 18,
+      { swing: 0.35, period: 3000 }, '#16a34a');
+    [155, width - 155].forEach((x, index) => {
+      const pair = this.createPortalPair(world, x, funnelY - 100, width / 2, funnelY + 190, '#4ade80', 25);
+      pair.portalIn.singleUse = true;
+      pair.portalIn.portalIcon = '↓';
+      pair.portalIn.portalCaption = '구출 사다리';
+      pair.portalIn.pulsePeriod = 3600;
+      pair.portalIn.openDuration = 2300;
+      pair.portalIn.pulsePhase = index * 1800;
+    });
+    return { spinners, finaleDevice: cobra };
   },
 
   // 소용돌이 조립

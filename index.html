@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261003-dynamic">
   <!-- Matter.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
   <!-- Canvas Confetti CDN -->
@@ -87,6 +87,7 @@
               <option value="fate-doors">🚪 운명의 세 문 — 2연속 관문·회전 자물쇠</option>
               <option value="snakes-ladders">🐍 뱀과 사다리 — 장거리 대역전·최후의 뱀</option>
             </select>
+            <p id="map-description" class="map-description"></p>
           </div>
 
           <div class="form-group row-group">
@@ -126,6 +127,10 @@
       
       <div id="canvas-container">
         <!-- Matter.js Canvas가 여기에 마운트됨 -->
+      </div>
+      <div id="finale-banner" class="finale-banner" aria-live="off">
+        <span class="finale-label">결승 반전</span>
+        <div><strong id="finale-title"></strong><p id="finale-hint"></p></div>
       </div>
       
       <!-- 전체 결과 팝업 오버레이 -->
@@ -170,9 +175,9 @@
   </div>
 
   <!-- Scripts -->
-  <script src="js/maps.js"></script>
-  <script src="js/minimap.js"></script>
-  <script src="js/game.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/maps.js?v=20261003-dynamic"></script>
+  <script src="js/minimap.js?v=20261003-dynamic"></script>
+  <script src="js/game.js?v=20261003-dynamic"></script>
+  <script src="js/app.js?v=20261003-dynamic"></script>
 </body>
 </html>

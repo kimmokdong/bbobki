@@ -70,7 +70,7 @@ window.MarbleOverview = {
     this.layout = { x, y, scale };
     ctx.setTransform(this.canvas.width / width, 0, 0, this.canvas.height / height, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#1a2435';
+    ctx.fillStyle = game.mapTheme?.background || '#1a2435';
     ctx.fillRect(x, y, game.width * scale, worldHeight * scale);
     ctx.save();
     ctx.beginPath();
@@ -81,8 +81,12 @@ window.MarbleOverview = {
 
     bodies.forEach(body => {
       if (body.label === 'marble' || body.label === 'map_sign' || body.label === 'finish_sensor') return;
+      if (body.label === 'portal_out' && body.render.visible === false) return;
       const portal = body.label === 'portal_in' || body.label === 'portal_out';
-      ctx.fillStyle = body.label === 'booster' ? '#0e7490' : body.label === 'slow_zone' ? '#854d0e' : body.render.fillStyle || '#64748b';
+      ctx.globalAlpha = body.portalActive === false ? 0.25 : 1;
+      ctx.fillStyle = body.label === 'booster' ? '#0e7490' : body.label === 'slow_zone' ? '#854d0e' :
+        body.label === 'wind_zone' ? '#164e63' : body.label === 'launch_pad' ? '#be185d' :
+        body.label === 'gravity_well' ? '#4c1d95' : body.render.fillStyle || '#64748b';
       ctx.strokeStyle = portal ? body.portalColor : body.render.strokeStyle || '#64748b';
       ctx.lineWidth = 0.7 / scale;
       if (body.circleRadius) {
@@ -99,6 +103,7 @@ window.MarbleOverview = {
           ctx.fill();
         });
       }
+      ctx.globalAlpha = 1;
     });
 
     const finishY = game.finishSensor.position.y;

@@ -88,16 +88,14 @@ window.MarbleGame = {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
 
-        if ((bodyA.label === 'punch' && bodyB.label === 'marble') ||
-            (bodyB.label === 'punch' && bodyA.label === 'marble') ||
-            (bodyA.label === 'bumper' && bodyB.label === 'marble') ||
-            (bodyB.label === 'bumper' && bodyA.label === 'marble')) {
+        if ((bodyA.label === 'marble' && (bodyB.label === 'bumper' || bodyB.bumperPower)) ||
+            (bodyB.label === 'marble' && (bodyA.label === 'bumper' || bodyA.bumperPower))) {
           
           const marble = bodyA.label === 'marble' ? bodyA : bodyB;
           const obstacle = bodyA.label === 'marble' ? bodyB : bodyA;
           const now = this.engine.timing.timestamp;
           // 같은 범퍼가 에너지를 계속 보충해 제자리 왕복하는 현상을 막는다.
-          if (this.currentMapType === 'pinball' && obstacle.label === 'bumper') {
+          if (obstacle.label === 'bumper' || obstacle.bumperPower) {
             const hits = marble.marbleRef.bumperHits;
             if (now - (hits.get(obstacle.id) ?? -Infinity) < 1000) return;
             hits.set(obstacle.id, now);
@@ -108,11 +106,11 @@ window.MarbleGame = {
           let vy = -20; // 기본적으로 강하게 위로 튕김
           
           // 범퍼일 경우 위치 기반으로 튕겨냄
-          if (obstacle.label === 'bumper') {
+          if (obstacle.label === 'bumper' || obstacle.bumperPower) {
             const dx = marble.position.x - obstacle.position.x;
             const dy = marble.position.y - obstacle.position.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const impulse = this.currentMapType === 'pinball' ? 9 : 15;
+            const impulse = obstacle.bumperPower || (this.currentMapType === 'pinball' ? 9 : 15);
             vx = (dx / dist) * impulse;
             vy = (dy / dist) * impulse - (this.currentMapType === 'pinball' ? 1 : 5);
           }
@@ -140,6 +138,8 @@ window.MarbleGame = {
   // 맵 로드 및 물리 경계 구축
   loadMap: function(mapType) {
     this.currentMapType = mapType;
+    this.mapTheme = window.MarbleMaps.themes[mapType] || window.MarbleMaps.themes.pinball;
+    this.mapStartedAt = this.engine.timing.timestamp;
     this.setSpeed(1.0);
     this.slowMoFactor = 1.0;
     this.isTargetAnnounced = false;
@@ -172,12 +172,6 @@ window.MarbleGame = {
     this.finishSensor = common.finishSensor;
     this.funnelY = common.funnelY;
 
-    // 신규 장거리 맵은 각자의 전용 피니시 기믹을 사용한다.
-    if (mapType === 'fate-doors' || mapType === 'snakes-ladders') {
-      common.punches.forEach(punch => Composite.remove(this.world, punch));
-      common.punches = [];
-    }
-
     // 프리셋 맵 로드
     const boundaryIds = new Set(Composite.allBodies(this.world).map(body => body.id));
     let mapData;
@@ -204,6 +198,8 @@ window.MarbleGame = {
       Composite.allBodies(this.world).filter(body => !boundaryIds.has(body.id)).forEach(body => {
         Body.setPosition(body, { x: body.position.x, y: stretchY(body.position.y) });
         if (body.targetPos) body.targetPos.y = stretchY(body.targetPos.y);
+        if (body.motion) body.motion.y = stretchY(body.motion.y);
+        if (body.destinations) body.destinations.forEach(destination => { destination.y = stretchY(destination.y); });
       });
     }
 
@@ -212,7 +208,18 @@ window.MarbleGame = {
     }
 
     this.punches = common.punches || [];
-
+    const bodies = Composite.allBodies(this.world);
+    this.movingObstacles = bodies.filter(body => body.motion);
+    this.portals = bodies.filter(body => body.label === 'portal_in');
+    this.launchPads = bodies.filter(body => body.label === 'launch_pad');
+    this.forceFields = bodies.filter(body => body.label === 'wind_zone' || body.label === 'gravity_well');
+    this.finaleDevice = mapData?.finaleDevice;
+    this.finaleStartY = this.funnelY - this.mapTheme.finaleOffset;
+    this.updateMapDevices();
+    document.getElementById('map-description').textContent = this.mapTheme.description;
+    document.getElementById('finale-title').textContent = this.mapTheme.finaleTitle;
+    document.getElementById('finale-hint').textContent = this.mapTheme.finaleHint;
+    document.getElementById('race-view').style.setProperty('--map-accent', this.mapTheme.color);
   },
 
   // 구슬들 세팅 및 스폰
@@ -252,6 +259,7 @@ window.MarbleGame = {
         skillActiveTime: 0,
         portalCooldownTime: 0,
         usedPortals: new Set(),
+        usedLaunchPads: new Set(),
         bumperHits: new Map(),
         progressY: y,
         progressAt: this.engine.timing.timestamp,
@@ -420,6 +428,7 @@ window.MarbleGame = {
       marble.trail = [];
       marble.portalCooldownTime = 0;
       marble.usedPortals.clear();
+      marble.usedLaunchPads.clear();
       marble.bumperHits.clear();
       marble.progressY = y;
       marble.progressAt = marble.lastNudgeAt = this.engine.timing.timestamp;
@@ -493,6 +502,7 @@ window.MarbleGame = {
 
   // 본 경기와 회귀 검증이 같은 물리 경로를 사용한다. 시간은 배속·슬로모션을 반영한 엔진 시간이다.
   stepPhysics: function(delta) {
+    this.updateMapDevices();
     this.updateSpinners(delta);
     this.updatePunches();
     this.processMapGimmicks(delta);
@@ -504,8 +514,38 @@ window.MarbleGame = {
 
   updateSpinners: function(delta = 16.666) {
     this.spinners.forEach(spinner => {
-      const nextAngle = spinner.angle + spinner.rotationSpeed * delta / 16.666;
-      Body.setAngle(spinner, nextAngle);
+      const modulation = spinner.reversePeriod ? Math.sin((this.engine.timing.timestamp - this.mapStartedAt) * Math.PI * 2 / spinner.reversePeriod) : 1;
+      const nextAngle = spinner.angle + spinner.rotationSpeed * modulation * delta / 16.666;
+      Body.setAngle(spinner, nextAngle, true);
+    });
+  },
+
+  updateMapDevices: function() {
+    const elapsed = this.engine.timing.timestamp - this.mapStartedAt;
+    (this.movingObstacles || []).forEach(body => {
+      const motion = body.motion;
+      const phase = elapsed * Math.PI * 2 / motion.period + motion.phase;
+      const wave = motion.pulse ? (1 + Math.sin(phase)) / 2 : Math.sin(phase);
+      body.motionProgress = wave;
+      Body.setPosition(body, {
+        x: motion.x + motion.rangeX * wave,
+        y: motion.y + motion.rangeY * Math.sin(phase + (motion.phaseY || 0))
+      }, true);
+      Body.setAngle(body, motion.angle + motion.swing * Math.sin(phase), true);
+    });
+    (this.portals || []).forEach(portal => {
+      portal.portalActive = !portal.pulsePeriod || (elapsed + portal.pulsePhase) % portal.pulsePeriod < portal.openDuration;
+      if (portal.destinations) {
+        const index = (Math.floor(elapsed / portal.changePeriod) + portal.choicePhase) % portal.destinations.length;
+        const destination = portal.destinations[index];
+        portal.targetPos = { x: destination.x, y: destination.y };
+        portal.portalColor = destination.color;
+        portal.portalCaption = destination.caption;
+        portal.portalIcon = destination.caption.includes('↩') ? '↩' : '↓';
+      }
+    });
+    (this.forceFields || []).forEach(field => {
+      if (field.label === 'wind_zone') field.fieldFlow = Math.sin(elapsed * Math.PI * 2 / field.fieldPeriod + field.fieldPhase);
     });
   },
 
@@ -522,7 +562,7 @@ window.MarbleGame = {
     const bodies = Composite.allBodies(this.world);
     const now = this.engine.timing.timestamp;
 
-    const portals = bodies.filter(b => b.label === 'portal_in');
+    const portals = this.portals;
     const boosters = bodies.filter(b => b.label === 'booster');
     const slowZones = bodies.filter(b => b.label === 'slow_zone');
 
@@ -535,12 +575,36 @@ window.MarbleGame = {
       // 1. 순간이동 포탈 감지
       if (now > marble.portalCooldownTime) {
         for (let portal of portals) {
+          if (!portal.portalActive) continue;
           if (portal.singleUse && marble.usedPortals.has(portal.portalId)) continue;
           const dist = Vector.magnitude(Vector.sub(portal.position, pos));
           if (dist < (portal.triggerRadius || 30)) {
             this.triggerPortalTransfer(marble, portal, now);
             break;
           }
+        }
+      }
+
+      // 점프 패드는 구슬마다 한 번만 발동해 결승 스프링에 계속 되돌아가지 않게 한다.
+      for (const pad of this.launchPads) {
+        if (marble.usedLaunchPads.has(pad.id) || !this.isPointInRectangle(pos, pad)) continue;
+        marble.usedLaunchPads.add(pad.id);
+        Body.setVelocity(body, pad.launchVelocity);
+        this.createWindWaveParticles(pos.x, pos.y, '#7dd3fc');
+      }
+      for (const field of this.forceFields) {
+        if (field.label === 'wind_zone') {
+          if (this.isPointInRectangle(pos, field)) Body.applyForce(body, pos, { x: field.fieldStrength * field.fieldFlow * body.mass, y: 0.0001 * body.mass });
+        } else {
+          const dx = pos.x - field.position.x;
+          const dy = pos.y - field.position.y;
+          const distance = Math.hypot(dx, dy);
+          if (distance < 1 || distance > field.circleRadius) continue;
+          const strength = Math.sqrt(1 - distance / field.circleRadius) * body.mass;
+          Body.applyForce(body, pos, {
+            x: (-dx * 0.00045 - dy * 0.0012 * field.fieldDirection) / distance * strength,
+            y: (-dy * 0.00045 + dx * 0.0012 * field.fieldDirection) / distance * strength
+          });
         }
       }
 
@@ -795,9 +859,15 @@ window.MarbleGame = {
       targetY = this.cameraTarget.body.position.y - this.viewportHeight * 0.45;
 
       // 타겟 구슬이 피니시 라인 근처(깔때기 부근)에 진입했을 때 연출 발동!
-      if (this.cameraTarget.body.position.y > this.funnelY - 80 && !this.cameraTarget.isFinished) {
-        this.targetZoom = 2.4;        // 줌인 2.4배로 상향
-        this.slowMoFactor = 0.25;      // 슬로우 모션 (0.25배속)
+      if (this.cameraTarget.body.position.y > this.funnelY + 100 && !this.cameraTarget.isFinished) {
+        this.targetZoom = 2.4;
+        this.slowMoFactor = 0.25;
+      } else if (this.cameraTarget.body.position.y > this.funnelY - 100 && !this.cameraTarget.isFinished) {
+        this.targetZoom = 1.55;
+        this.slowMoFactor = 0.45;
+      } else if (this.cameraTarget.body.position.y > this.finaleStartY && !this.cameraTarget.isFinished) {
+        this.targetZoom = 1.08;
+        this.slowMoFactor = 0.7;
       } else {
         this.targetZoom = 1.0;
         this.slowMoFactor = 1.0;
@@ -835,7 +905,7 @@ window.MarbleGame = {
     if (!this.ctx) return;
 
     const ctx = this.ctx;
-    ctx.fillStyle = '#1e2532'; // 약간 회색빛이 도는 다크 네이비/그레이
+    ctx.fillStyle = this.mapTheme?.background || '#1e2532';
     ctx.fillRect(0, 0, this.width, this.viewportHeight);
 
     // 카메라 줌인 보간 스무딩
@@ -868,6 +938,41 @@ window.MarbleGame = {
 
     // 1. 기믹 영역들
     bodies.forEach(body => {
+      if (body.label === 'portal_out' && body.render.visible === false) return;
+      if (body.label === 'wind_zone' || body.label === 'launch_pad') {
+        ctx.save();
+        ctx.beginPath();
+        body.vertices.forEach((vertex, index) => index ? ctx.lineTo(vertex.x, vertex.y) : ctx.moveTo(vertex.x, vertex.y));
+        ctx.closePath();
+        const wind = body.label === 'wind_zone';
+        ctx.fillStyle = wind ? 'rgba(125, 211, 252, 0.10)' : 'rgba(236, 72, 153, 0.24)';
+        ctx.strokeStyle = wind ? 'rgba(125, 211, 252, 0.45)' : '#f9a8d4';
+        ctx.lineWidth = 2;
+        ctx.setLineDash(wind ? [8, 8] : []);
+        ctx.fill(); ctx.stroke();
+        ctx.translate(body.position.x, body.position.y);
+        ctx.rotate(body.angle);
+        ctx.fillStyle = wind ? '#7dd3fc' : '#f9a8d4';
+        ctx.font = '700 13px Noto Sans KR';
+        ctx.textAlign = 'center';
+        ctx.fillText(wind ? (body.fieldFlow >= 0 ? '→ → 돌풍 → →' : '← ← 돌풍 ← ←') : '⇧ 점프', 0, 5);
+        ctx.restore();
+      }
+      if (body.label === 'gravity_well') {
+        ctx.save();
+        ctx.translate(body.position.x, body.position.y);
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.10)';
+        ctx.beginPath(); ctx.arc(0, 0, body.circleRadius, 0, Math.PI * 2); ctx.fill();
+        ctx.rotate((this.engine.timing.timestamp - this.mapStartedAt) * 0.00065 * body.fieldDirection + body.fieldPhase);
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
+        ctx.lineWidth = 2;
+        [0.33, 0.58, 0.84].forEach((ratio, index) => {
+          ctx.beginPath();
+          ctx.arc(0, 0, body.circleRadius * ratio, index * 1.5, index * 1.5 + Math.PI * 1.35);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
       if (body.label === 'portal_in' || body.label === 'portal_out') {
         const pos = body.position;
         const color = body.portalColor;
@@ -875,6 +980,7 @@ window.MarbleGame = {
         const pulse = 1 + Math.sin(now * 0.008) * 0.08;
 
         ctx.save();
+        if (body.portalActive === false) ctx.globalAlpha = 0.28;
         ctx.shadowBlur = 12;
         ctx.shadowColor = color;
         
@@ -901,6 +1007,14 @@ window.MarbleGame = {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(body.portalIcon, pos.x, pos.y + 1);
+        }
+        if (body.portalCaption) {
+          ctx.setLineDash([]);
+          ctx.shadowBlur = 0;
+          ctx.font = '700 12px Noto Sans KR';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = color;
+          ctx.fillText(body.portalActive === false ? '쉬는 중' : body.portalCaption, pos.x, pos.y + radius + 19);
         }
 
         ctx.restore();
@@ -983,7 +1097,8 @@ window.MarbleGame = {
       if (body.label === 'marble' || body.label === 'finish_sensor' || 
           body.label === 'portal_in' || body.label === 'portal_out' || 
           body.label === 'booster' || body.label === 'slow_zone' ||
-          body.label === 'map_sign') return;
+          body.label === 'map_sign' || body.label === 'wind_zone' ||
+          body.label === 'gravity_well' || body.label === 'launch_pad') return;
 
       ctx.beginPath();
       const partsToDraw = body.parts.length > 1 ? body.parts.slice(1) : [body];
@@ -1013,9 +1128,9 @@ window.MarbleGame = {
         ctx.fill();
         ctx.stroke();
       } 
-      else if (body.label === 'punch') {
-        ctx.fillStyle = body.render.fillStyle || '#ef4444';
-        ctx.strokeStyle = body.render.strokeStyle || '#fca5a5';
+      else if (body.label === 'moving_obstacle') {
+        ctx.fillStyle = body.render.fillStyle;
+        ctx.strokeStyle = body.render.strokeStyle;
         ctx.lineWidth = body.render.lineWidth || 2;
         ctx.shadowBlur = 10;
         ctx.shadowColor = ctx.fillStyle;
@@ -1026,6 +1141,15 @@ window.MarbleGame = {
       else {
         ctx.fillStyle = body.render.fillStyle || '#1e293b';
         ctx.fill();
+        if (body.render.strokeStyle) {
+          ctx.strokeStyle = body.render.strokeStyle;
+          ctx.lineWidth = body.render.lineWidth || 1;
+          ctx.stroke();
+        }
+      }
+      if (body.label === 'spinner' || (body.motion && !body.circleRadius)) {
+        ctx.beginPath(); ctx.arc(body.position.x, body.position.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#e2e8f0'; ctx.fill();
       }
     });
 
@@ -1047,6 +1171,14 @@ window.MarbleGame = {
       ctx.shadowBlur = 8;
       ctx.shadowColor = '#38bdf8';
       ctx.stroke();
+      ctx.shadowBlur = 0;
+      for (let i = 0; i < 10; i++) {
+        ctx.fillStyle = i % 2 ? '#f8fafc' : '#111827';
+        ctx.fillRect(this.width / 2 - 30 + i * 6, this.finishSensor.position.y - 5, 6, 10);
+      }
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '800 13px Outfit'; ctx.textAlign = 'center';
+      ctx.fillText('FINISH', this.width / 2, this.finishSensor.position.y + 30);
       ctx.restore();
     }
 
@@ -1147,6 +1279,27 @@ window.MarbleGame = {
 
     ctx.restore();
     window.MarbleOverview.render(this, bodies);
+    this.updateFinaleBanner();
+  },
+
+  updateFinaleBanner: function() {
+    if (!this.mapTheme) return;
+    const banner = document.getElementById('finale-banner');
+    const active = this.cameraTarget && !this.cameraTarget.isFinished && this.cameraTarget.body.position.y > this.finaleStartY;
+    banner.classList.toggle('active', !!active);
+    const device = this.finaleDevice;
+    const elapsed = this.engine.timing.timestamp - this.mapStartedAt;
+    let hint = this.mapTheme.finaleHint;
+    if (active && device?.changePeriod) {
+      const remaining = (device.changePeriod - elapsed % device.changePeriod) / 1000;
+      hint = `${device.statusName}: ${device.portalCaption} · ${remaining.toFixed(1)}초 뒤 경로 변경`;
+    } else if (active && device?.pulsePeriod) {
+      const cycle = (elapsed + device.pulsePhase) % device.pulsePeriod;
+      const remaining = ((device.portalActive ? device.openDuration : device.pulsePeriod) - cycle) / 1000;
+      hint = device.portalActive ? `코브라 활동 중 · ${remaining.toFixed(1)}초 뒤 휴식` : `코브라 쉬는 중 · ${remaining.toFixed(1)}초 뒤 다시 활동`;
+    }
+    const label = document.getElementById('finale-hint');
+    if (label.textContent !== hint) label.textContent = hint;
   },
 
   // ----------------------------------------------------
