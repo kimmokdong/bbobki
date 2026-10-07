@@ -420,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (finalRanks.length === 0) return;
 
     finalRanksList.innerHTML = '';
+    finalRanksList.style.setProperty('--rank-rows', Math.ceil(finalRanks.length / 2));
     finalRanks.forEach((marble, idx) => {
       const item = document.createElement('li');
       item.className = 'result-rank-item';
