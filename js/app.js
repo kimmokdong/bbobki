@@ -227,6 +227,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     leaderboardContainer.innerHTML = '';
+    // 순위 글자 크기: 인원이 많아도 스크롤 없이 세로 공간에 맞춘다
+    leaderboardContainer.style.setProperty('--rank-font', `clamp(11px, calc(100cqh / ${rankedMarbles.length} * 0.62), 30px)`);
 
     // 당첨 순위 계산
     let winnerTargetRank;
